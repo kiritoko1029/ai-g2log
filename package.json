@@ -1,0 +1,34 @@
+{
+  "name": "git-user-log",
+  "version": "1.0.0",
+  "description": "查询特定用户和时间范围的Git提交记录",
+  "main": "git-user-log.js",
+  "bin": {
+    "git-user-log": "./git-user-log.js"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "git",
+    "log",
+    "author",
+    "commit",
+    "history",
+    "statistics"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=12.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yourusername/git-user-log.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yourusername/git-user-log/issues"
+  },
+  "homepage": "https://github.com/yourusername/git-user-log#readme",
+  "dependencies": {}
+} 

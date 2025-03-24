@@ -1,0 +1,9 @@
+{
+  "deepseek_api_key": "sk-8add5461a6e64659a8a8b777adb1cd2d",
+  "default_author": "张三",
+  "default_since": "2025-03-17",
+  "default_until": "2025-03-24",
+  "repositories": {
+    "BGC512AI前端主操": "/Users/chenxiangcai/WebstormProjects/BGC512AI_SMART4J_FRONTEND"
+  }
+} 

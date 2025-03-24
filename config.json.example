@@ -1,0 +1,13 @@
+{
+  "deepseek_api_key": "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "default_author": "张三",
+  "default_since": "yesterday",
+  "default_until": "today",
+  "repositories": {
+    "前端": "/Users/username/Projects/frontend-project",
+    "后端": "/Users/username/Projects/backend-project",
+    "移动端": "/Users/username/Projects/mobile-app",
+    "文档": "/Users/username/Projects/documentation",
+    "工具": "/Users/username/Projects/tools"
+  }
+} 
