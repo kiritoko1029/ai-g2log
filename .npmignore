@@ -1,0 +1,12 @@
+.git/
+node_modules/
+.gitignore
+config.json
+.DS_Store
+*.log
+*.bak
+*.swp
+.vscode/
+.idea/
+g2log-*.tgz
+local-install.sh 

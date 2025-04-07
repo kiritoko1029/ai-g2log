@@ -1,13 +1,14 @@
 {
-  "name": "git-user-log",
-  "version": "1.0.0",
-  "description": "查询特定用户和时间范围的Git提交记录",
+  "name": "g2log",
+  "version": "1.2.0",
+  "description": "查询特定用户和时间范围的Git提交记录并通过AI进行总结，可通过npx直接运行",
   "main": "git-user-log.js",
   "bin": {
-    "git-user-log": "./git-user-log.js"
+    "g2log": "./git-user-log.js"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "postinstall": "node -e \"try { require('fs').chmodSync('./git-user-log.js', '755') } catch(e) { console.error(e) }\" && node install.js"
   },
   "keywords": [
     "git",
@@ -15,20 +16,24 @@
     "author",
     "commit",
     "history",
-    "statistics"
+    "statistics",
+    "ai",
+    "summary",
+    "npx",
+    "cli"
   ],
-  "author": "",
+  "author": "chenxiangc <chen1794@foxmail.com>",
   "license": "MIT",
   "engines": {
-    "node": ">=12.0.0"
+    "node": ">=16.0.0"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/yourusername/git-user-log.git"
+    "url": "git+https://github.com/chenxiangcai/git-user-log.git"
   },
   "bugs": {
-    "url": "https://github.com/yourusername/git-user-log/issues"
+    "url": "https://github.com/chenxiangcai/git-user-log/issues"
   },
-  "homepage": "https://github.com/yourusername/git-user-log#readme",
+  "homepage": "https://github.com/chenxiangcai/git-user-log#readme",
   "dependencies": {}
 } 

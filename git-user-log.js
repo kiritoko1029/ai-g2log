@@ -2,7 +2,13 @@
 
 /**
  * 获取指定用户和时间范围的Git日志
- * 使用方法: node git-user-log.js [--author="用户名"] [--since="2023-01-01"] [--until="2023-12-31"] [--repo="alias或路径"] [--format="格式"] [--output="文件路径"] [--stats] [--help]
+ * 使用方法: 
+ * - 全局安装: g2log [选项]
+ * - NPX直接运行: npx g2log [选项]
+ * 
+ * 常用选项:
+ * [--author="用户名"] [--since="2023-01-01"] [--until="2023-12-31"] 
+ * [--repo="alias或路径"] [--format="格式"] [--output="文件路径"] [--stats] [--help]
  */
 
 const { execSync } = require('child_process');
@@ -10,8 +16,23 @@ const path = require('path');
 const fs = require('fs');
 const https = require('https');
 const os = require('os');
+const readline = require('readline');
 
-// 控制台颜色
+// 检测是否通过npx运行
+const isRunningWithNpx = process.env.npm_lifecycle_event === 'npx' || 
+                        process.env.npm_execpath?.includes('npx') || 
+                        process.env.npm_command === 'exec';
+
+// 预解析命令行参数，以便在早期决定是否使用颜色
+const rawArgs = process.argv.slice(2);
+const forceColor = rawArgs.includes('--color') || rawArgs.includes('--force-color');
+const disableColor = rawArgs.includes('--no-color');
+
+// 修改颜色显示逻辑 - 默认就显示颜色，只有pipe时才根据TTY判断，或显式禁用时才不显示
+const isPiped = !process.stdout.isTTY;
+const shouldUseColor = (isPiped ? forceColor : true) && !disableColor;
+
+// ANSI 颜色代码定义
 const colors = {
   reset: '\x1b[0m',
   bright: '\x1b[1m',
@@ -40,28 +61,106 @@ const colors = {
   bgWhite: '\x1b[47m'
 };
 
+// 优化的彩色输出函数
+function colorize(text, color) {
+  // 如果不使用颜色或没有对应颜色代码，直接返回原文本
+  if (!shouldUseColor || !colors[color]) return text;
+  return colors[color] + text + colors.reset;
+}
+
 // 配置文件路径
 const CONFIG_PATH = path.join(os.homedir(), '.git-user-log-config.json');
-
+console.log(CONFIG_PATH);
 // 默认配置
 const DEFAULT_CONFIG = {
-  deepseek_api_key: '',
+  api_key: '',
   default_author: '',
   default_since: 'today',
   default_until: 'today',
-  repositories: {}
+  model: 'deepseek-chat',  // 默认使用deepseek-chat模型
+  api_base_url: 'https://api.deepseek.com', // 默认使用DeepSeek API
+  api_provider: 'deepseek', // API提供商: deepseek或openai
+  repositories: {},
+  prompt_template: `
+请根据下面的Git提交记录，用3-5句话简洁地总结一天的工作内容。
+
+以下是Git提交记录:
+
+{{GIT_LOGS}}
+
+要求：
+1. 按项目和日期组织内容
+2. 每个项目每天的工作内容用3-5句话概括
+3. 使用清晰、专业但不晦涩的语言
+4. 突出重要的功能开发、问题修复和优化改进
+5. 适合放入工作日报的简洁描述
+6. 输出格式为：【日期】：
+                  【项目名称】- 【工作内容概述】
+                  【项目名称】- 【工作内容概述】
+7. 回复不要出现多余的内容，非必要不要用markdown格式
+`
 };
 
 // 加载配置
 function loadConfig() {
   try {
     if (fs.existsSync(CONFIG_PATH)) {
-      return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
+      // 读取配置文件
+      const fileContent = fs.readFileSync(CONFIG_PATH, 'utf-8');
+      
+      try {
+        // 尝试解析JSON
+        const userConfig = JSON.parse(fileContent);
+        
+        // 检查并处理旧版字段
+        if (userConfig.deepseek_api_key && !userConfig.api_key) {
+          userConfig.api_key = userConfig.deepseek_api_key;
+          // 这里不删除旧字段，以保持兼容性，只在fixConfigFile中执行迁移
+        }
+        
+        // 检查prompt_template是否完整
+        if (userConfig.prompt_template && typeof userConfig.prompt_template === 'string') {
+          // 检查变量名是否被错误分割
+          if (userConfig.prompt_template.includes('{log_con') && 
+              !userConfig.prompt_template.includes('{log_content}')) {
+            console.log(colorize('警告: 配置文件中的prompt模板格式有误，已修复', 'yellow'));
+            userConfig.prompt_template = userConfig.prompt_template.replace('{log_con\ntent}', '{log_content}');
+          }
+        }
+        
+        // 移除旧版推理模型相关配置
+        if (userConfig.use_reasoning !== undefined) {
+          delete userConfig.use_reasoning;
+        }
+        
+        if (userConfig.show_reasoning !== undefined) {
+          delete userConfig.show_reasoning;
+        }
+        
+        if (userConfig.reasoning_prompt_template) {
+          delete userConfig.reasoning_prompt_template;
+        }
+        
+        const mergedConfig = {
+          ...DEFAULT_CONFIG,  // 首先应用默认配置
+          ...userConfig       // 然后用用户配置覆盖默认值
+        };
+        
+        // 确保api_key字段存在，兼容旧版配置
+        if (!mergedConfig.api_key && userConfig.deepseek_api_key) {
+          mergedConfig.api_key = userConfig.deepseek_api_key;
+        }
+        
+        return mergedConfig;
+      } catch (parseError) {
+        console.error(colorize(`解析配置文件失败: ${parseError.message}，将使用默认配置`, 'red'));
+        return {...DEFAULT_CONFIG};
+      }
     }
-    return {...DEFAULT_CONFIG};
+    return {...DEFAULT_CONFIG}; // 如果配置文件不存在，返回默认配置的副本
   } catch (error) {
     console.error(colorize(`加载配置失败: ${error.message}`, 'red'));
-    return {...DEFAULT_CONFIG};
+    return {...DEFAULT_CONFIG}; // 如果出错，返回默认配置的副本
   }
 }
 
@@ -79,14 +178,21 @@ function saveConfig(config) {
 // 设置API密钥
 function setApiKey(key) {
   const config = loadConfig();
-  config.deepseek_api_key = key;
+  config.api_key = key;
   return saveConfig(config);
 }
 
 // 获取API密钥
 function getApiKey() {
   const config = loadConfig();
-  return config.deepseek_api_key;
+  return config.api_key;
+}
+
+// 设置AI模型
+function setAIModel(model) {
+  const config = loadConfig();
+  config.model = model;
+  return saveConfig(config);
 }
 
 // 设置默认作者
@@ -125,7 +231,11 @@ function removeRepository(alias) {
 }
 
 // 获取仓库路径（支持别名）
-function getRepositoryPath(repoIdentifier) {
+function getRepositoryPath(repoIdentifier, useLocalRepo) {
+  if (useLocalRepo) {
+    return process.cwd();
+  }
+  
   if (!repoIdentifier) return process.cwd();
   
   const config = loadConfig();
@@ -143,96 +253,184 @@ function listRepositories() {
   return config.repositories || {};
 }
 
-// 彩色输出
-function colorize(text, color) {
-  return colors[color] + text + colors.reset;
-}
-
-// 创建进度显示
+// 创建一个高级spinner
 function createSpinner() {
-  const spinnerFrames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-  let index = 0;
-  let intervalId;
-  let message = '';
-  
-  function start(msg) {
-    message = msg || '';
-    clearInterval(intervalId);
-    index = 0;
-    
-    intervalId = setInterval(() => {
-      process.stdout.write(`\r${colorize(spinnerFrames[index], 'cyan')} ${message}`);
-      index = (index + 1) % spinnerFrames.length;
-    }, 80);
-    
-    return {
-      stop: (endMsg) => {
-        clearInterval(intervalId);
-        process.stdout.write(`\r${colorize('✓', 'green')} ${endMsg || message}     \n`);
-      },
-      update: (msg) => {
-        message = msg;
-      },
-      fail: (errMsg) => {
-        clearInterval(intervalId);
-        process.stdout.write(`\r${colorize('✗', 'red')} ${errMsg || '失败'}     \n`);
+  const spinner = {
+    start(text) {
+      if (shouldUseColor) {
+        process.stdout.write(colorize(`⏳ ${text}`, 'cyan'));
+      } else {
+        process.stdout.write(`${text}`);
       }
-    };
-  }
+      return this;
+    },
+    stop(text) {
+      process.stdout.clearLine?.(0);
+      process.stdout.cursorTo?.(0);
+      if (shouldUseColor) {
+        console.log(colorize(text, 'green'));
+      } else {
+        console.log(text);
+      }
+      return this;
+    },
+    fail(text) {
+      process.stdout.clearLine?.(0);
+      process.stdout.cursorTo?.(0);
+      if (shouldUseColor) {
+        console.log(colorize(text, 'red'));
+      } else {
+        console.log(text);
+      }
+      return this;
+    },
+    update(text) {
+      process.stdout.clearLine?.(0);
+      process.stdout.cursorTo?.(0);
+      if (shouldUseColor) {
+        process.stdout.write(colorize(`⏳ ${text}`, 'cyan'));
+      } else {
+        process.stdout.write(`${text}`);
+      }
+      return this;
+    }
+  };
   
-  return { start };
+  return spinner;
 }
 
-// 显示帮助信息
+// 修复配置文件
+function fixConfigFile() {
+  try {
+    if (fs.existsSync(CONFIG_PATH)) {
+      // 读取当前配置
+      const fileContent = fs.readFileSync(CONFIG_PATH, 'utf-8');
+      let config;
+      
+      try {
+        config = JSON.parse(fileContent);
+        
+        // 迁移旧字段到新字段
+        if (config.deepseek_api_key && !config.api_key) {
+          config.api_key = config.deepseek_api_key;
+          delete config.deepseek_api_key;
+          console.log(colorize('已将配置中的 deepseek_api_key 迁移到 api_key', 'yellow'));
+        }
+        
+        // 确保有API提供商和基础URL配置
+        if (!config.api_provider) {
+          config.api_provider = DEFAULT_CONFIG.api_provider;
+          console.log(colorize('已添加默认API提供商配置', 'yellow'));
+        }
+        
+        if (!config.api_base_url) {
+          config.api_base_url = DEFAULT_CONFIG.api_base_url;
+          console.log(colorize('已添加默认API基础URL配置', 'yellow'));
+        }
+        
+        // 移除旧版推理模型相关配置
+        if (config.use_reasoning !== undefined) {
+          delete config.use_reasoning;
+          console.log(colorize('已移除旧版推理模式配置', 'yellow'));
+        }
+        
+        if (config.show_reasoning !== undefined) {
+          delete config.show_reasoning;
+          console.log(colorize('已移除旧版显示推理过程配置', 'yellow'));
+        }
+        
+        if (config.reasoning_prompt_template) {
+          delete config.reasoning_prompt_template;
+          console.log(colorize('已移除旧版推理模板配置', 'yellow'));
+        }
+        
+        // 检查prompt_template是否完整
+        if (config.prompt_template && typeof config.prompt_template === 'string') {
+          // 检查变量名是否被错误分割
+          if (config.prompt_template.includes('{log_con') && 
+              !config.prompt_template.includes('{log_content}')) {
+            console.log(colorize('警告: 配置文件中的prompt模板格式有误，已修复', 'yellow'));
+            config.prompt_template = config.prompt_template.replace('{log_con\ntent}', '{log_content}');
+          }
+        }
+        
+      } catch (error) {
+        console.error(colorize(`配置文件JSON格式错误，将重新创建配置文件`, 'red'));
+        config = {...DEFAULT_CONFIG};
+      }
+      
+      // 重新写入完整的配置文件
+      fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), 'utf-8');
+      return true;
+    } else {
+      console.error(colorize(`配置文件不存在，将创建默认配置`, 'yellow'));
+      return saveConfig({...DEFAULT_CONFIG});
+    }
+  } catch (error) {
+    console.error(colorize(`修复配置文件失败: ${error.message}`, 'red'));
+    return false;
+  }
+}
+
+// 显示帮助
 function showHelp() {
   console.log(`
-${colorize('获取指定用户和时间范围的Git日志', 'bright')}
+${colorize('✨ 获取指定用户和时间范围的Git日志 ✨', 'bright')}
 
-${colorize('使用方法:', 'yellow')} 
-  node git-user-log.js [--author="用户名"] [--since="2023-01-01"] [--until="2023-12-31"] [选项]
+${colorize('📋 使用方法:', 'yellow')} 
+  g2log [--since="2023-01-01"] [--until="2023-12-31"] [选项]
 
-${colorize('参数说明:', 'green')}
-  --author="用户名"         指定Git提交作者 (如未指定，使用配置文件中的默认值)
+${colorize('🕒 时间参数:', 'green')}
   --since="YYYY-MM-DD"     起始日期 (如未指定，使用配置文件中的默认值)
   --until="YYYY-MM-DD"     结束日期 (如未指定，使用配置文件中的默认值)
-  --repo="alias或路径"      Git仓库路径或别名，默认为当前目录
+  --local                  使用本地仓库，忽略配置文件中的仓库设置
 
-${colorize('配置管理:', 'magenta')}
-  --set-api-key="KEY"      设置DeepSeek API密钥
+${colorize('🎨 显示设置:', 'blue')}
+  --color, --force-color   强制启用彩色输出 (即使在管道或重定向中)
+  --no-color               禁用彩色输出
+  --nosave                 不保存到文件 (仅在终端显示)
+  --save="file.txt"        保存结果到指定文件
+  --debug, --show-prompt   显示发送给AI的完整提示内容
+
+${colorize('⚙️ 配置管理:', 'magenta')}
+  --config                 启动交互式配置向导
+  --skip-config-check      跳过配置检查
+  --set-api-key="KEY"      设置API密钥
+  --set-api-provider="PROVIDER"  设置API提供商 (deepseek或openai)
+  --set-api-url="URL"      设置API基础URL
+  --set-ai-model="MODEL"   设置AI模型 (默认: deepseek-chat，可选: deepseek-reasoner)
   --set-default-author="NAME"  设置默认作者
   --set-time-range --since="DATE" --until="DATE"  设置默认时间范围
   --add-repo="ALIAS" --path="/path/to/repo"  添加仓库配置
   --remove-repo="ALIAS"    删除仓库配置
   --list-repos             列出所有配置的仓库
-
-${colorize('输出选项:', 'cyan')}
-  --format="格式"           自定义输出格式，默认为详细格式
-  --brief                  使用简洁格式 (仅显示哈希、作者、日期和提交信息)
-  --simple                 使用极简格式 (仅显示日期和提交信息)
-  --output="文件路径"        将输出保存到指定文件
-  --stats                  包含文件修改统计信息
-  --patch                  显示每个提交的具体更改 (补丁)
-  --no-merges              排除合并提交
-  --max-count=N            限制显示的提交数量
-  --branches               显示每个提交所属的分支
-  --tags                   显示提交相关的标签
-  --no-color               禁用彩色输出
-  --ai-summary             使用AI总结提交记录 (3-5句话)
+  --set-prompt-template="file.txt"  从文件设置AI总结的prompt模板
+  --reset-prompt-template  重置AI总结的prompt模板为默认值
+  --fix-config             修复配置文件格式问题
   --help                   显示帮助信息
 
-${colorize('示例:', 'magenta')}
-  # 使用配置中的默认值生成今日工作总结
-  node git-user-log.js --ai-summary
+${colorize('📝 示例:', 'cyan')}
+  # 使用配置的默认值生成今日工作总结 (处理配置中的所有仓库)
+  g2log
   
-  # 查询特定用户在特定时间的提交
-  node git-user-log.js --author="张三" --since="2023-01-01" --until="2023-12-31"
+  # 指定时间范围
+  g2log --since="2023-01-01" --until="2023-12-31"
   
-  # 使用仓库别名
-  node git-user-log.js --repo="frontend" --ai-summary
+  # 使用本地仓库
+  g2log --local
+  
+  # 强制启用颜色显示（在使用管道或重定向时有用）
+  g2log --color | less -R
+  
+  # 启动交互式配置向导
+  g2log --config
   
   # 设置配置
-  node git-user-log.js --set-default-author="张三"
-  node git-user-log.js --add-repo="frontend" --path="/path/to/frontend-project"
+  g2log --set-default-author="张三"
+  g2log --set-ai-model="deepseek-reasoner"
+  g2log --set-api-provider="openai"
+  g2log --set-api-url="https://api.openai.com"
+  g2log --add-repo="frontend" --path="/path/to/frontend-project"
 `);
   process.exit(0);
 }
@@ -240,20 +438,63 @@ ${colorize('示例:', 'magenta')}
 // 解析命令行参数
 function parseArgs() {
   const args = {};
-  process.argv.slice(2).forEach(arg => {
-    if (arg.startsWith('--')) {
+  const rawArgs = process.argv.slice(2);
+  
+  // 将帮助标志和便捷选项放在前面
+  if (rawArgs.includes('-h') || rawArgs.includes('--help')) {
+    args.help = true;
+    return args;
+  }
+  
+  // 解析标准参数
+  for (let i = 0; i < rawArgs.length; i++) {
+    const arg = rawArgs[i];
+    
+    // 处理格式为 --key=value 的参数
+    if (arg.startsWith('--') && arg.includes('=')) {
       const parts = arg.substring(2).split('=');
       const key = parts[0];
-      if (parts.length > 1) {
-        // 有值的参数 (--key=value)
         const value = parts.slice(1).join('=').replace(/^["'](.*)["']$/, '$1'); // 移除可能的引号
         args[key] = value;
-      } else {
-        // 无值的参数 (--flag)
+      continue;
+    }
+    
+    // 处理格式为 --key value 的参数
+    if (arg.startsWith('--') && i + 1 < rawArgs.length && !rawArgs[i + 1].startsWith('--')) {
+      const key = arg.substring(2);
+      const value = rawArgs[i + 1];
+      args[key] = value;
+      i++; // 跳过下一个参数，因为它是值
+      continue;
+    }
+    
+    // 处理格式为 --flag 的布尔参数
+    if (arg.startsWith('--')) {
+      const key = arg.substring(2);
         args[key] = true;
       }
     }
-  });
+  
+  // 处理特殊参数
+  if (args.local === undefined) {
+    args.local = false; // 默认使用配置中的仓库
+  }
+  
+  // 处理--output和--save参数，它们是同义词
+  if (args.save && !args.output) {
+    args.output = args.save;
+  }
+  
+  // 添加--skip-config-check参数支持
+  if (args['skip-config-check'] === undefined) {
+    args['skip-config-check'] = false; // 默认不跳过配置检查
+  }
+  
+  // 添加--config参数支持（用于显式启动配置向导）
+  if (args.config === undefined) {
+    args.config = false; // 默认不启动配置向导
+  }
+  
   return args;
 }
 
@@ -403,75 +644,826 @@ function colorizePatch(patch, useColor) {
   }).join('\n');
 }
 
-// 调用DeepSeek API进行提交日志总结
-function summarizeWithAI(logContent, author, since, until) {
-  return new Promise((resolve, reject) => {
-    const apiKey = getApiKey();
+// 构建完整的API URL
+function buildApiUrl(baseUrl, endpoint = 'chat/completions') {
+  // 如果baseUrl以斜杠结尾，直接拼接endpoint
+  if (baseUrl.endsWith('/')) {
+    return `${baseUrl}${endpoint}`;
+  }
+  
+  // 如果baseUrl不以斜杠结尾，添加斜杠再拼接endpoint
+  return `${baseUrl}/${endpoint}`;
+}
+
+// 使用AI进行总结 
+async function summarizeWithAI(gitLogs, author, since, until, spinner = null) {
+  try {
+    // 加载配置
+    const config = loadConfig();
+    const modelName = config.ai_model || 'gpt-4-turbo';
+    const apiKey = config.api_key || '';
+    const apiProvider = config.api_provider || 'openai';
+    const apiBaseURL = config.api_base_url || '';
     
-    if (!apiKey || apiKey === 'your-api-key-here') {
-      reject(new Error('未配置DeepSeek API密钥，请使用 --set-api-key="您的密钥" 进行设置'));
-      return;
+    let prompt = config.prompt_template || `请根据以下Git提交记录，总结${author}在${since}到${until}期间的主要工作内容。
+按照类别进行归纳，突出重点任务和成就。
+用清晰的标题和小标题组织内容，确保总结全面且易于阅读。
+
+Git提交记录:
+{{GIT_LOGS}}`;
+
+    // 替换变量 - 支持多种变量格式以兼容用户自定义模板
+    prompt = prompt.replace('{{GIT_LOGS}}', gitLogs)
+                  .replace('{log_content}', gitLogs)  // 添加对{log_content}格式的支持
+                  .replace('{{AUTHOR}}', author)
+                  .replace('{author}', author)
+                  .replace('{{SINCE}}', since)
+                  .replace('{since}', since)
+                  .replace('{{UNTIL}}', until)
+                  .replace('{until}', until);
+
+    if (spinner) spinner.update('🔄 正在连接API...');
+    
+    // 打印完整提示内容（添加--debug参数时显示）
+    if (process.argv.includes('--debug') || process.argv.includes('--show-prompt')) {
+      console.log(colorize('\n📝 完整提示内容:', 'cyan'));
+      console.log(colorize('=' .repeat(50), 'dim'));
+      console.log(prompt);
+      console.log(colorize('=' .repeat(50), 'dim'));
     }
     
-    const prompt = `
-请根据下面的Git提交记录，用3-5句话简洁地总结一天的工作内容。
+    // 根据不同的API提供商使用不同的实现
+    let aiResponse = '';
+    const providerLower = apiProvider.toLowerCase();
+    
+    // 根据提供商名称选择对应的实现
+    if (providerLower === 'openai') {
+      aiResponse = await getOpenAIResponse(apiKey, prompt, modelName, apiBaseURL, spinner);
+    } else {
+      // 其他提供商默认使用DeepSeek实现
+      aiResponse = await getDeepSeekResponse(apiKey, prompt, modelName, apiBaseURL, spinner);
+    }
 
-这些是${author}在${since}至${until}期间的Git提交记录:
-
-${logContent}
-
-请使用简洁、专业的语言，只需要描述完成了什么工作，不要有多余的格式。不需要包含任何标题、分类或计划。
-`;
-
-    const requestData = JSON.stringify({
-      model: 'deepseek-chat',
-      messages: [
-        { role: 'system', content: 'You are a helpful assistant that summarizes Git commit logs into concise work summaries.' },
-        { role: 'user', content: prompt }
-      ],
-      stream: false
-    });
-
-    const options = {
-      hostname: 'api.deepseek.com',
-      path: '/chat/completions',
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Length': Buffer.byteLength(requestData)
+    // 停止spinner并显示成功消息
+    if (spinner) spinner.stop('✅ AI总结已生成');
+    
+    // 格式化并输出AI总结
+    console.log(`\n${colorize('📊 ' + author + ' 的工作总结', 'bright')}`);
+    console.log(`${colorize('📅 时间范围: ' + since + ' 至 ' + until, 'green')}`);
+    console.log(`${colorize('🤖 使用模型: ' + modelName, 'cyan')}`);
+    console.log(`${colorize('=' .repeat(30), 'bright')}\n`);
+    
+    // 分段输出并优化格式
+    const lines = aiResponse.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      
+      // 为标题添加颜色
+      if (line.startsWith('# ')) {
+        console.log(colorize(line, 'bright'));
+      } 
+      // 为子标题添加颜色
+      else if (line.startsWith('## ')) {
+        console.log(colorize(line, 'yellow'));
+      } 
+      // 为列表项添加图标和颜色
+      else if (line.trim().startsWith('- ')) {
+        console.log(colorize('  • ' + line.trim().substring(2), 'reset'));
+      } 
+      // 为数字列表添加颜色
+      else if (/^\d+\.\s/.test(line.trim())) {
+        console.log(colorize('  ' + line.trim(), 'reset'));
       }
-    };
+      // 为分隔线添加颜色
+      else if (line.trim().startsWith('---')) {
+        console.log(colorize('  ' + '─'.repeat(30), 'dim'));
+      }
+      // 普通文本
+      else {
+        console.log(colorize(line, 'reset'));
+      }
+    }
+    
+    return aiResponse;
+  } catch (error) {
+    if (spinner) spinner.fail(`❌ AI总结失败: ${error.message}`);
+    throw error;
+  }
+}
 
-    const req = https.request(options, (res) => {
-      let data = '';
-
-      res.on('data', (chunk) => {
-        data += chunk;
-      });
-
-      res.on('end', () => {
-        if (res.statusCode === 200) {
-          try {
-            const jsonResponse = JSON.parse(data);
-            const summary = jsonResponse.choices[0].message.content;
-            resolve(summary);
-          } catch (error) {
-            reject(new Error(`解析API响应失败: ${error.message}`));
-          }
-        } else {
-          reject(new Error(`API请求失败 (${res.statusCode}): ${data}`));
+// 从OpenAI获取响应
+async function getOpenAIResponse(apiKey, prompt, modelName, apiBaseURL, spinner = null) {
+  // 验证参数
+  if (!apiKey) throw new Error('未设置OpenAI API密钥');
+  
+  // 构造请求头和URL
+  const headers = {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${apiKey}`
+  };
+  
+  const baseURL = apiBaseURL || 'https://api.openai.com';
+  const url = `${baseURL}/v1/chat/completions`;
+  
+  // 构造请求体
+  const data = {
+    model: modelName || 'gpt-4',
+    messages: [
+      { role: 'system', content: '你是一位专业的工作总结助手，擅长将Git提交记录整理成清晰的工作报告。' },
+      { role: 'user', content: prompt }
+    ],
+    temperature: 0.5,
+    max_tokens: 2048,
+    stream: true // 启用流式传输
+  };
+  
+  // 打印请求内容
+  console.log(colorize('\n📨 发送给OpenAI的请求:', 'cyan'));
+  console.log(colorize(`📌 API端点: ${url}`, 'dim'));
+  console.log(colorize(`🤖 使用模型: ${data.model}`, 'dim'));
+  console.log(colorize(`🌡️ 温度: ${data.temperature}`, 'dim'));
+  console.log(colorize(`🔢 最大Token: ${data.max_tokens}`, 'dim'));
+  console.log(colorize('📄 系统角色: ' + data.messages[0].content, 'dim'));
+  console.log(colorize('💬 提示内容预览: ' + data.messages[1].content.substring(0, 150) + '...', 'dim'));
+  
+  if (spinner) spinner.update('🔄 正在向OpenAI发送请求...');
+  
+  return new Promise((resolve, reject) => {
+    try {
+      // 解析URL以获取主机名和路径
+      const urlObj = new URL(url);
+      
+      // 准备请求选项
+      const options = {
+        hostname: urlObj.hostname,
+        path: urlObj.pathname,
+        method: 'POST',
+        headers: headers,
+        rejectUnauthorized: false // 在开发环境中可能需要
+      };
+      
+      // 确定使用http还是https
+      const protocol = urlObj.protocol === 'https:' ? require('https') : require('http');
+      
+      // 创建请求
+      const req = protocol.request(options, (res) => {
+        // 检查状态码
+        if (res.statusCode !== 200) {
+          let errorData = '';
+          res.on('data', chunk => {
+            errorData += chunk.toString();
+          });
+          res.on('end', () => {
+            let errorMessage = `OpenAI API请求失败 (${res.statusCode})`;
+            try {
+              const parsedError = JSON.parse(errorData);
+              errorMessage += `: ${JSON.stringify(parsedError)}`;
+            } catch (e) {
+              errorMessage += `: ${errorData}`;
+            }
+            if (spinner) spinner.fail(`❌ ${errorMessage}`);
+            reject(new Error(errorMessage));
+          });
+          return;
         }
+        
+        let fullContent = '';
+        let buffer = '';
+        
+        // 处理数据
+        res.on('data', (chunk) => {
+          // 将新的数据添加到缓冲区
+          buffer += chunk.toString();
+          
+          // 尝试从缓冲区中提取完整的SSE消息
+          let match;
+          const dataRegex = /data: (.*?)\n\n/gs;
+          
+          while ((match = dataRegex.exec(buffer)) !== null) {
+            const data = match[1];
+            
+            // 跳过 [DONE] 消息
+            if (data === '[DONE]') continue;
+            
+            try {
+              const parsedData = JSON.parse(data);
+              
+              // 获取内容增量
+              if (parsedData.choices && 
+                  parsedData.choices[0] && 
+                  parsedData.choices[0].delta && 
+                  parsedData.choices[0].delta.content) {
+                const content = parsedData.choices[0].delta.content;
+                fullContent += content;
+                
+                // 直接输出内容增量到控制台
+                process.stdout.write(content);
+              }
+            } catch (err) {
+              // 忽略解析错误
+            }
+          }
+          
+          // 保留可能不完整的最后一部分
+          const lastIndex = buffer.lastIndexOf('\n\n');
+          if (lastIndex !== -1) {
+            buffer = buffer.substring(lastIndex + 2);
+          }
+        });
+        
+        // 处理结束
+        res.on('end', () => {
+          if (spinner) spinner.stop('✅ OpenAI响应已接收');
+          console.log(); // 添加换行符
+          resolve(fullContent);
+        });
       });
-    });
-
-    req.on('error', (error) => {
-      reject(new Error(`API请求出错: ${error.message}`));
-    });
-
-    req.write(requestData);
-    req.end();
+      
+      // 处理请求错误
+      req.on('error', (error) => {
+        if (spinner) spinner.fail(`❌ OpenAI API网络错误: ${error.message}`);
+        reject(error);
+      });
+      
+      // 发送请求体
+      req.write(JSON.stringify(data));
+      req.end();
+    } catch (error) {
+      if (spinner) spinner.fail(`❌ OpenAI API错误: ${error.message}`);
+      reject(error);
+    }
   });
+}
+
+// 从DeepSeek获取响应
+async function getDeepSeekResponse(apiKey, prompt, modelName, apiBaseURL, spinner = null) {
+  // 验证参数
+  if (!apiKey) throw new Error('未设置DeepSeek API密钥');
+  
+  // 构造请求头和URL
+  const headers = {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${apiKey}`
+  };
+  
+  const baseURL = apiBaseURL || 'https://api.deepseek.com';
+  const url = `${baseURL}/v1/chat/completions`;
+  
+  // 构造请求体
+  const data = {
+    model: modelName || 'deepseek-chat',
+    messages: [
+      { role: 'system', content: '你是一位专业的工作总结助手，擅长将Git提交记录整理成清晰的工作报告。' },
+      { role: 'user', content: prompt }
+    ],
+    temperature: 0.5,
+    max_tokens: 2048,
+    stream: true // 启用流式传输
+  };
+  
+  // 打印请求内容
+  console.log(colorize('\n📨 发送给AI的请求:', 'cyan'));
+  console.log(colorize(`📌 API提供商: ${apiBaseURL}`, 'dim'));
+  console.log(colorize(`🤖 使用模型: ${data.model}`, 'dim'));
+  console.log(colorize(`🌡️ 温度: ${data.temperature}`, 'dim'));
+  console.log(colorize(`🔢 最大Token: ${data.max_tokens}`, 'dim'));
+  console.log(colorize('📄 系统角色: ' + data.messages[0].content, 'dim'));
+  console.log(colorize('💬 提示内容预览: ' + data.messages[1].content.substring(0, 150) + '...', 'dim'));
+  
+  if (spinner) spinner.update('🔄 正在向DeepSeek发送请求...\n');
+  
+  return new Promise((resolve, reject) => {
+    try {
+      // 解析URL以获取主机名和路径
+      const urlObj = new URL(url);
+      
+      // 准备请求选项
+      const options = {
+        hostname: urlObj.hostname,
+        path: urlObj.pathname,
+        method: 'POST',
+        headers: headers,
+        rejectUnauthorized: false // 在开发环境中可能需要
+      };
+      
+      // 确定使用http还是https
+      const protocol = urlObj.protocol === 'https:' ? require('https') : require('http');
+      
+      // 创建请求
+      const req = protocol.request(options, (res) => {
+        // 检查状态码
+        if (res.statusCode !== 200) {
+          let errorData = '';
+          res.on('data', chunk => {
+            errorData += chunk.toString();
+          });
+          res.on('end', () => {
+            let errorMessage = `DeepSeek API请求失败 (${res.statusCode})`;
+            try {
+              const parsedError = JSON.parse(errorData);
+              errorMessage += `: ${JSON.stringify(parsedError)}`;
+            } catch (e) {
+              errorMessage += `: ${errorData}`;
+            }
+            if (spinner) spinner.fail(`❌ ${errorMessage}`);
+            reject(new Error(errorMessage));
+          });
+          return;
+        }
+        
+        let fullContent = '';
+        let buffer = '';
+        
+        // 处理数据
+        res.on('data', (chunk) => {
+          // 将新的数据添加到缓冲区
+          buffer += chunk.toString();
+          
+          // 尝试从缓冲区中提取完整的SSE消息
+          let match;
+          const dataRegex = /data: (.*?)\n\n/gs;
+          
+          while ((match = dataRegex.exec(buffer)) !== null) {
+            const data = match[1];
+            
+            // 跳过 [DONE] 消息
+            if (data === '[DONE]') continue;
+            
+            try {
+              const parsedData = JSON.parse(data);
+              
+              // 获取内容增量
+              if (parsedData.choices && 
+                  parsedData.choices[0] && 
+                  parsedData.choices[0].delta && 
+                  parsedData.choices[0].delta.content) {
+                const content = parsedData.choices[0].delta.content;
+                fullContent += content;
+                
+                // 直接输出内容增量到控制台
+                process.stdout.write(content);
+              }
+            } catch (err) {
+              // 忽略解析错误
+            }
+          }
+          
+          // 保留可能不完整的最后一部分
+          const lastIndex = buffer.lastIndexOf('\n\n');
+          if (lastIndex !== -1) {
+            buffer = buffer.substring(lastIndex + 2);
+          }
+        });
+        
+        // 处理结束
+        res.on('end', () => {
+          if (spinner) spinner.stop('✅ DeepSeek响应已接收');
+          console.log(); // 添加换行符
+          resolve(fullContent);
+        });
+      });
+      
+      // 处理请求错误
+      req.on('error', (error) => {
+        if (spinner) spinner.fail(`❌ DeepSeek API网络错误: ${error.message}`);
+        reject(error);
+      });
+      
+      // 发送请求体
+      req.write(JSON.stringify(data));
+      req.end();
+    } catch (error) {
+      if (spinner) spinner.fail(`❌ DeepSeek API错误: ${error.message}`);
+      reject(error);
+    }
+  });
+}
+
+// 从多个仓库获取日志
+async function getLogsFromMultipleRepos(author, since, until, options) {
+  const config = loadConfig();
+  
+  // 检查是否有配置的仓库
+  if (!config.repositories || Object.keys(config.repositories).length === 0) {
+    console.log(colorize('⚠️ 未配置任何仓库，请使用 --add-repo="别名" --path="/仓库路径" 添加仓库', 'yellow'));
+    return null;
+  }
+  
+  const spinner = createSpinner();
+  spinner.start(`🔍 正在从 ${Object.keys(config.repositories).length} 个仓库获取提交记录...`);
+  
+  // 用于保存所有仓库的日志
+  let allLogs = '';
+  let logCount = 0;
+  let repos = 0;
+  
+  // 遍历所有仓库
+  for (const [alias, repoPath] of Object.entries(config.repositories)) {
+    try {
+      // 检查仓库路径是否有效
+      spinner.update(`🔍 正在检查仓库 ${alias} (${repoPath})...`);
+        execSync(`git -C "${repoPath}" rev-parse --is-inside-work-tree`, { stdio: 'ignore' });
+      
+      // 构建Git命令
+      let command = `git -C "${repoPath}" log --author="${author}" --since="${since}" --until="${until}" --date=format:"%Y-%m-%d %H:%M:%S"`;
+      
+      // 添加选项
+      if (options.noMerges) {
+        command += ' --no-merges';
+      }
+      
+      // 添加格式选项
+      if (options.simpleMode) {
+        command += ` --pretty=format:"${alias} | %ad | %s%n%b%n"`;
+      } else {
+        command += ` --pretty=format:"${alias} | %ad | %h | %s%n%b%n"`;
+      }
+      
+      // 执行命令
+      spinner.update(`🔍 正在获取仓库 ${alias} 的提交记录...`);
+      const repoLogs = execSync(command, { encoding: 'utf-8' });
+      
+      // 检查是否有日志，如果有则添加到结果
+      if (repoLogs.trim()) {
+        const repoCommitCount = (repoLogs.match(/\n\n/g) || []).length + 1;
+        logCount += repoCommitCount;
+        repos++;
+        
+        if (allLogs) allLogs += '\n\n';
+        allLogs += repoLogs;
+      }
+    } catch (error) {
+      spinner.update(`⚠️ 处理仓库 ${alias} 时出错: ${error.message}`);
+    }
+  }
+  
+  // 更新spinner显示结果
+  if (logCount > 0) {
+    spinner.stop(`✅ 从仓库 ${repos > 1 ? `${repos} 个仓库` : Object.keys(config.repositories)[0]} 获取到 ${logCount} 条提交`);
+  } else {
+    spinner.stop(`📭 未找到 ${author} 在 ${since} 至 ${until} 期间的提交记录`);
+  }
+  
+  return allLogs;
+}
+
+// 设置prompt模板
+function setPromptTemplate(template) {
+  const config = loadConfig();
+  config.prompt_template = template;
+  return saveConfig(config);
+}
+
+// 重置prompt模板到默认值
+function resetPromptTemplate() {
+  const config = loadConfig();
+  config.prompt_template = DEFAULT_CONFIG.prompt_template;
+  const result = saveConfig(config);
+  
+  if (result) {
+    // 显示默认模板内容
+    console.log('\n' + colorize('默认模板内容:', 'green'));
+    console.log('===========================================');
+    console.log(DEFAULT_CONFIG.prompt_template);
+    console.log('===========================================\n');
+    
+    // 再次读取配置文件，确保保存成功
+    try {
+      const savedConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
+      if (savedConfig.prompt_template === DEFAULT_CONFIG.prompt_template) {
+        return true;
+      } else {
+        console.error(colorize('警告: 默认模板保存不完整，尝试直接写入...', 'yellow'));
+        // 直接重写配置文件
+        const fixedConfig = {...savedConfig, prompt_template: DEFAULT_CONFIG.prompt_template};
+        fs.writeFileSync(CONFIG_PATH, JSON.stringify(fixedConfig, null, 2), 'utf-8');
+      }
+    } catch (error) {
+      console.error(colorize(`验证保存失败: ${error.message}`, 'red'));
+      return false;
+    }
+  }
+  
+  return result;
+}
+
+// 设置API提供商
+function setAPIProvider(provider) {
+  const config = loadConfig();
+  config.api_provider = provider;
+  return saveConfig(config);
+}
+
+// 设置API URL
+function setAPIBaseURL(url) {
+  const config = loadConfig();
+  config.api_base_url = url;
+  return saveConfig(config);
+}
+
+// 检测是否是通过npx临时运行并添加相应提示
+function showNpxInfo() {
+  if (isRunningWithNpx) {
+    console.log(colorize('\n💡 提示: 您正在通过npx临时运行g2log。', 'cyan'));
+    console.log(colorize('要全局安装以便更快地使用，请运行：', 'cyan'));
+    console.log(colorize('npm install -g g2log\n', 'green'));
+  }
+}
+
+// 检查配置文件状态
+function checkConfig(silent = false) {
+  try {
+    // 检查配置文件是否存在
+    if (!fs.existsSync(CONFIG_PATH)) {
+      if (!silent) console.log(colorize('⚠️ 检测到配置缺失: 配置文件不存在', 'red'));
+      return {
+        needsConfig: true,
+        missingConfig: ['api_key', 'default_author'],
+        reason: '配置文件不存在',
+        currentConfig: null
+      };
+    }
+    
+    // 尝试加载配置
+    const config = loadConfig();
+    const missingConfig = [];
+    
+    // 检查关键配置是否存在
+    if (!config.api_key) {
+      missingConfig.push('api_key');
+    }
+    
+    if (!config.default_author) {
+      missingConfig.push('default_author');
+    }
+    
+    // 设置默认时间范围（如果不存在）
+    if (!config.default_since) {
+      config.default_since = '7 days ago';
+    }
+    
+    if (!config.default_until) {
+      config.default_until = 'today';
+    }
+    
+    // 若没有设置仓库配置，添加一个空对象
+    if (!config.repositories) {
+      config.repositories = {};
+    }
+    
+    // 若有缺失配置，返回需要配置的状态
+    if (missingConfig.length > 0) {
+      if (!silent) {
+        console.log(colorize(`⚠️ 检测到配置缺失: ${missingConfig.join(', ')}`, 'red'));
+      }
+      return {
+        needsConfig: true,
+        missingConfig,
+        reason: '必要配置项缺失',
+        currentConfig: config
+      };
+    }
+    
+    // 所有必要配置都存在
+    return {
+      needsConfig: false,
+      missingConfig: [],
+      reason: '配置完整',
+      currentConfig: config
+    };
+  } catch (error) {
+    if (!silent) {
+      console.error(colorize(`❌ 配置检查错误: ${error.message}`, 'red'));
+    }
+    return {
+      needsConfig: true,
+      missingConfig: ['api_key', 'default_author'],
+      reason: `配置文件解析错误: ${error.message}`,
+      currentConfig: null
+    };
+  }
+}
+
+// 设置交互式配置向导
+async function setupConfigInteractive() {
+  const spinner = createSpinner();
+  console.log(colorize('\n🛠️  Git日志工具配置向导', 'bright'));
+  console.log(colorize('=' .repeat(30), 'bright'));
+  console.log();
+
+  // 创建readline接口
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+  });
+
+  // 转换问题为Promise
+  const question = (query) => new Promise((resolve) => rl.question(query, resolve));
+
+  try {
+    // 初始化配置
+    let config = {};
+    try {
+      if (fs.existsSync(CONFIG_PATH)) {
+        config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
+        console.log(colorize('ℹ️  检测到现有配置，将在其基础上进行修改。', 'blue'));
+      } else {
+        console.log(colorize('ℹ️  未检测到配置文件，将创建新配置。', 'blue'));
+        config = { 
+          repositories: {},
+          prompt_template: `请根据下面的Git提交记录，用3-5句话简洁地总结一天的工作内容。
+
+以下是Git提交记录:
+
+{log_content}
+
+要求：
+1. 按项目和日期组织内容
+2. 每个项目每天的工作内容用3-5句话概括
+3. 使用清晰、专业但不晦涩的语言
+4. 突出重要的功能开发、问题修复和优化改进
+5. 适合放入工作日报的简洁描述
+6. 输出格式为：【日期】：
+                  【项目名称】- 【工作内容概述】
+                  【项目名称】- 【工作内容概述】
+7. 回复不要出现多余的内容，非必要不要用markdown格式`
+        };
+      }
+    } catch (error) {
+      console.log(colorize('⚠️  读取配置文件时出错，将创建新配置。', 'yellow'));
+      config = { 
+        repositories: {},
+        prompt_template: `请根据下面的Git提交记录，用3-5句话简洁地总结一天的工作内容。
+
+以下是Git提交记录:
+
+{log_content}
+
+要求：
+1. 按项目和日期组织内容
+2. 每个项目每天的工作内容用3-5句话概括
+3. 使用清晰、专业但不晦涩的语言
+4. 突出重要的功能开发、问题修复和优化改进
+5. 适合放入工作日报的简洁描述
+6. 输出格式为：【日期】：
+                  【项目名称】- 【工作内容概述】
+                  【项目名称】- 【工作内容概述】
+7. 回复不要出现多余的内容，非必要不要用markdown格式`
+      };
+    }
+
+    // 步骤1: 设置API提供商
+    console.log(colorize('\n📡 步骤1: 设置API提供商', 'yellow'));
+    let apiProvider = config.api_provider || '';
+    
+    const providerInput = await question(colorize(`  请选择API提供商 [${apiProvider ? apiProvider : 'OpenAI/DeepSeek'}]: `, 'green'));
+    if (providerInput.trim() !== '') {
+      apiProvider = providerInput.trim();
+    } else if (apiProvider === '') {
+      apiProvider = 'openai'; // 默认值
+    }
+    
+    // 保存用户输入的提供商名称，不做验证
+    config.api_provider = apiProvider.toLowerCase();
+    console.log(colorize(`  ✅ API提供商已设置为: ${config.api_provider}`, 'green'));
+
+    // 步骤2: 设置API基础URL
+    console.log(colorize('\n🔗 步骤2: 设置API基础URL', 'yellow'));
+    
+    // 根据提供商设置默认值
+    let defaultBaseURL = config.api_base_url || '';
+    if (!defaultBaseURL) {
+      if (config.api_provider === 'openai') {
+        defaultBaseURL = 'https://api.openai.com';
+      } else if (config.api_provider === 'deepseek' || config.api_provider === 'ds') {
+        defaultBaseURL = 'https://api.deepseek.com';
+      }
+    }
+    
+    const baseURLInput = await question(colorize(`  请输入API基础URL [${defaultBaseURL}]: `, 'green'));
+    config.api_base_url = baseURLInput.trim() || defaultBaseURL;
+    console.log(colorize(`  ✅ API基础URL已设置为: ${config.api_base_url}`, 'green'));
+
+    // 步骤3: 设置AI模型
+    console.log(colorize('\n🤖 步骤3: 设置AI模型', 'yellow'));
+    
+    // 根据提供商设置默认模型
+    let defaultModel = config.ai_model || '';
+    if (!defaultModel) {
+      if (config.api_provider === 'openai') {
+        defaultModel = 'gpt-3.5-turbo';
+      } else if (config.api_provider === 'deepseek' || config.api_provider === 'ds') {
+        defaultModel = 'deepseek-chat';
+      }
+    }
+    
+    const modelInput = await question(colorize(`  请输入AI模型名称 [${defaultModel}]: `, 'green'));
+    config.ai_model = modelInput.trim() || defaultModel;
+    console.log(colorize(`  ✅ AI模型已设置为: ${config.ai_model}`, 'green'));
+
+    // 步骤4: 设置API密钥
+    console.log(colorize('\n🔑 步骤4: 设置API密钥', 'yellow'));
+    const existingKey = config.api_key || '';
+    const keyInput = await question(colorize(`  请输入API密钥${existingKey ? ' [已配置，按Enter保留]' : ''}: `, 'green'));
+    if (keyInput.trim() !== '') {
+      config.api_key = keyInput.trim();
+      console.log(colorize('  ✅ API密钥已更新', 'green'));
+    } else if (!existingKey) {
+      console.log(colorize('  ⚠️ 警告: 未设置API密钥，某些功能可能无法使用。', 'yellow'));
+    } else {
+      console.log(colorize('  ℹ️ API密钥保持不变', 'blue'));
+    }
+
+    // 步骤5: 设置默认作者
+    console.log(colorize('\n👤 步骤5: 设置默认作者', 'yellow'));
+    const existingAuthor = config.default_author || '';
+    const authorInput = await question(colorize(`  请输入默认作者名称 [${existingAuthor}]: `, 'green'));
+    config.default_author = authorInput.trim() || existingAuthor;
+    console.log(colorize(`  ✅ 默认作者已设置为: ${config.default_author}`, 'green'));
+
+    // 步骤6: 设置默认时间范围（可选）
+    console.log(colorize('\n🕒 步骤6: 设置默认时间范围（可选）', 'yellow'));
+    
+    // 获取当前的默认值
+    const defaultSince = config.default_since || '7 days ago';
+    const defaultUntil = config.default_until || 'today';
+    
+    const sinceInput = await question(colorize(`  请输入默认起始时间 [${defaultSince}]: `, 'green'));
+    config.default_since = sinceInput.trim() || defaultSince;
+    
+    const untilInput = await question(colorize(`  请输入默认结束时间 [${defaultUntil}]: `, 'green'));
+    config.default_until = untilInput.trim() || defaultUntil;
+    
+    console.log(colorize(`  ✅ 默认时间范围已设置为: ${config.default_since} 至 ${config.default_until}`, 'green'));
+
+    // 步骤7: 仓库配置（可选）
+    console.log(colorize('\n📂 步骤7: 仓库配置（可选）', 'yellow'));
+    
+    // 显示当前配置的仓库
+    const repos = config.repositories || {};
+    if (Object.keys(repos).length > 0) {
+      console.log(colorize('  当前配置的仓库:', 'cyan'));
+      let index = 1;
+      for (const [name, path] of Object.entries(repos)) {
+        console.log(colorize(`  ${index++}. ${name}: ${path}`, 'reset'));
+      }
+    } else {
+      console.log(colorize('  当前没有配置的仓库', 'cyan'));
+    }
+    
+    // 询问是否添加仓库
+    let addRepo = true;
+    while (addRepo) {
+      const addRepoInput = await question(colorize('  是否添加仓库配置？(y/n): ', 'green'));
+      if (addRepoInput.toLowerCase() === 'y' || addRepoInput.toLowerCase() === 'yes') {
+        // 获取仓库别名
+        const repoName = await question(colorize('  请输入仓库别名（如 frontend）: ', 'green'));
+        if (!repoName.trim()) {
+          console.log(colorize('  ❌ 仓库别名不能为空', 'red'));
+          continue;
+        }
+        
+        // 获取仓库路径
+        const repoPath = await question(colorize('  请输入仓库路径（绝对路径）: ', 'green'));
+        if (!repoPath.trim()) {
+          console.log(colorize('  ❌ 仓库路径不能为空', 'red'));
+          continue;
+        }
+        
+        // 验证路径是否为有效的Git仓库
+        try {
+          const pathSpinner = spinner.start('  🔍 正在验证仓库路径...');
+          execSync(`git -C "${repoPath}" rev-parse --is-inside-work-tree`, { stdio: 'ignore' });
+          pathSpinner.stop('  ✅ 仓库路径有效');
+          
+          // 添加仓库配置
+          if (!config.repositories) config.repositories = {};
+          config.repositories[repoName.trim()] = repoPath.trim();
+          console.log(colorize(`  ✅ 已添加仓库: ${repoName.trim()} -> ${repoPath.trim()}`, 'green'));
+        } catch (error) {
+          console.log(colorize(`  ❌ 路径 "${repoPath}" 不是有效的Git仓库`, 'red'));
+        }
+      } else {
+        addRepo = false;
+      }
+    }
+
+    // 保存配置
+    const configDir = path.dirname(CONFIG_PATH);
+    if (!fs.existsSync(configDir)) {
+      fs.mkdirSync(configDir, { recursive: true });
+    }
+    
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), 'utf-8');
+    console.log(colorize(`\n✅ 配置已保存到: ${CONFIG_PATH}`, 'bright'));
+    console.log(colorize('现在您可以使用g2log工具了！默认会从当前时间查询过去7天的记录。', 'bright'));
+    console.log(colorize('使用 --since 和 --until 参数可以指定不同的时间范围。', 'bright'));
+    
+  } catch (error) {
+    console.error(colorize(`\n❌ 配置过程出错: ${error.message}`, 'red'));
+  } finally {
+    rl.close();
+  }
 }
 
 // 主函数
@@ -479,7 +1471,6 @@ async function getGitLogs() {
   try {
     const spinner = createSpinner();
     const args = parseArgs();
-    const config = loadConfig();
     
     // 显示帮助信息
     if (args.help) {
@@ -487,53 +1478,158 @@ async function getGitLogs() {
       return;
     }
     
+    // 检查是否要显示自定义配置向导
+    if (args.config) {
+      console.log(colorize('🔧 启动配置向导...', 'cyan'));
+      await setupConfigInteractive();
+      return;
+    }
+    
+    // 配置检查与向导（仅当不是特定的配置命令时）
+    if (!args['set-api-key'] && !args['set-default-author'] && !args['add-repo'] && 
+        !args['fix-config'] && !args['remove-repo'] && !args['list-repos'] && 
+        !args['set-prompt-template'] && !args['reset-prompt-template'] &&
+        !args['skip-config-check']) {
+      
+      // 检查配置状态
+      const configStatus = checkConfig();
+      
+      // 如果配置缺失
+      if (configStatus.needsConfig) {
+        if (isRunningWithNpx || !fs.existsSync(CONFIG_PATH)) {
+          // 对于NPX运行或首次使用（无配置文件），显示提示并询问是否配置
+          console.log(colorize('\n⚠️ 检测到配置缺失: ' + configStatus.reason, 'yellow'));
+          if (configStatus.missingConfig.includes('default_author')) {
+            console.log(colorize('❗ 必须设置默认作者才能使用此工具。', 'red'));
+          }
+          
+          // 创建readline接口进行简单询问
+          const rl = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout
+          });
+          
+          const question = (query) => new Promise((resolve) => rl.question(query, resolve));
+          const answer = await question(colorize('❓ 是否现在进行配置？(y/n): ', 'cyan'));
+          rl.close();
+          
+          if (answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes') {
+            // 启动配置向导
+            await setupConfigInteractive();
+            // 配置完成后，重新加载配置
+            const config = loadConfig();
+            
+            // 如果依然缺少必要配置项，提示并退出
+            if (!config.default_author || config.default_author === '') {
+              console.log(colorize('\n❌ 错误: 未设置默认作者，这是必需的。', 'red'));
+              console.log(colorize('💡 请使用 g2log --set-default-author="用户名" 进行设置后再试。', 'yellow'));
+              process.exit(1);
+            }
+          } else if (configStatus.missingConfig.includes('default_author')) {
+            // 如果用户拒绝配置且缺少必要的default_author，提示并退出
+            console.log(colorize('\n❌ 错误: 未设置默认作者，这是必需的。', 'red'));
+            console.log(colorize('💡 请使用 g2log --set-default-author="用户名" 进行设置后再试。', 'yellow'));
+            process.exit(1);
+          }
+        } else if (configStatus.missingConfig.includes('default_author')) {
+          // 对于非NPX运行但缺少必要default_author的情况，直接错误提示
+          console.error(colorize('❌ 错误: 配置文件中未设置默认作者。请使用 --set-default-author="用户名" 设置默认作者', 'red'));
+          process.exit(1);
+        }
+      }
+    }
+    
+    // 加载配置（在配置检查和可能的设置之后）
+    const config = loadConfig();
+    
+    // 修复配置文件
+    if (args['fix-config']) {
+      const fixSpinner = spinner.start('🔧 正在修复配置文件...');
+      if (fixConfigFile()) {
+        fixSpinner.stop('✅ 配置文件已修复');
+      } else {
+        fixSpinner.fail('❌ 配置文件修复失败');
+      }
+      return;
+    }
+    
     // 配置管理
     if (args['set-api-key']) {
-      const keySpinner = spinner.start('正在设置API密钥...');
+      const keySpinner = spinner.start('🔑 正在设置API密钥...');
       if (setApiKey(args['set-api-key'])) {
-        keySpinner.stop('API密钥设置成功');
+        keySpinner.stop('✅ API密钥设置成功');
       } else {
-        keySpinner.fail('API密钥设置失败');
+        keySpinner.fail('❌ API密钥设置失败');
+      }
+      return;
+    }
+    
+    if (args['set-api-provider']) {
+      const providerSpinner = spinner.start('🎨 正在设置API提供商...');
+      if (setAPIProvider(args['set-api-provider'])) {
+        providerSpinner.stop(`✅ API提供商已设置为: ${args['set-api-provider']}`);
+      } else {
+        providerSpinner.fail('❌ API提供商设置失败');
+      }
+      return;
+    }
+    
+    if (args['set-api-url']) {
+      const urlSpinner = spinner.start('🔗 正在设置API基础URL...');
+      if (setAPIBaseURL(args['set-api-url'])) {
+        urlSpinner.stop(`✅ API基础URL已设置为: ${args['set-api-url']}`);
+      } else {
+        urlSpinner.fail('❌ API基础URL设置失败');
+      }
+      return;
+    }
+    
+    if (args['set-ai-model']) {
+      const modelSpinner = spinner.start('🤖 正在设置AI模型...');
+      if (setAIModel(args['set-ai-model'])) {
+        modelSpinner.stop(`✅ AI模型已设置为: ${args['set-ai-model']}`);
+      } else {
+        modelSpinner.fail('❌ AI模型设置失败');
       }
       return;
     }
     
     if (args['set-default-author']) {
-      const authorSpinner = spinner.start('正在设置默认作者...');
+      const authorSpinner = spinner.start('👤 正在设置默认作者...');
       if (setDefaultAuthor(args['set-default-author'])) {
-        authorSpinner.stop(`默认作者已设置为: ${args['set-default-author']}`);
+        authorSpinner.stop(`✅ 默认作者已设置为: ${args['set-default-author']}`);
       } else {
-        authorSpinner.fail('默认作者设置失败');
+        authorSpinner.fail('❌ 默认作者设置失败');
       }
       return;
     }
     
     if (args['set-time-range']) {
-      const timeSpinner = spinner.start('正在设置默认时间范围...');
+      const timeSpinner = spinner.start('🕒 正在设置默认时间范围...');
       if (setDefaultTimeRange(args.since, args.until)) {
-        timeSpinner.stop(`默认时间范围已设置为: ${args.since || '(未更改)'} 至 ${args.until || '(未更改)'}`);
+        timeSpinner.stop(`✅ 默认时间范围已设置为: ${args.since || '(未更改)'} 至 ${args.until || '(未更改)'}`);
       } else {
-        timeSpinner.fail('默认时间范围设置失败');
+        timeSpinner.fail('❌ 默认时间范围设置失败');
       }
       return;
     }
     
     if (args['add-repo'] && args.path) {
-      const repoSpinner = spinner.start(`正在添加仓库配置: ${args['add-repo']} -> ${args.path}`);
+      const repoSpinner = spinner.start(`🔖 正在添加仓库配置: ${args['add-repo']} -> ${args.path}`);
       if (addRepository(args['add-repo'], args.path)) {
-        repoSpinner.stop('仓库配置已添加');
+        repoSpinner.stop('✅ 仓库配置已添加');
       } else {
-        repoSpinner.fail('仓库配置添加失败');
+        repoSpinner.fail('❌ 仓库配置添加失败');
       }
       return;
     }
     
     if (args['remove-repo']) {
-      const repoSpinner = spinner.start(`正在删除仓库配置: ${args['remove-repo']}`);
+      const repoSpinner = spinner.start(`🗑️ 正在删除仓库配置: ${args['remove-repo']}`);
       if (removeRepository(args['remove-repo'])) {
-        repoSpinner.stop('仓库配置已删除');
+        repoSpinner.stop('✅ 仓库配置已删除');
       } else {
-        repoSpinner.fail('仓库配置删除失败或不存在');
+        repoSpinner.fail('❌ 仓库配置删除失败或不存在');
       }
       return;
     }
@@ -554,370 +1650,168 @@ async function getGitLogs() {
       return;
     }
     
-    // 使用参数值或默认配置
-    const repoArg = args.repo;
-    const repoPath = getRepositoryPath(repoArg);
-    const author = args.author || config.default_author;
-    const since = args.since || config.default_since;
-    const until = args.until || config.default_until;
-    
-    // 其他参数处理
-    const briefMode = args.brief;
-    const simpleMode = args.simple;
-    const includeStats = args.stats;
-    const includePatch = args.patch;
-    const noMerges = args['no-merges'];
-    const maxCount = args['max-count'];
-    const showBranches = args.branches;
-    const showTags = args.tags;
-    const useColor = args['no-color'] !== true;
-    const outputFile = args.output;
-    const aiSummary = args['ai-summary'];
-    
-    // 参数验证
-    if (!author) {
-      console.error(colorize('错误: 未指定作者且配置文件中无默认作者。请使用 --author="用户名" 或设置默认作者', 'red'));
-      process.exit(1);
+    // 重置prompt模板
+    if (args['reset-prompt-template']) {
+      const promptSpinner = spinner.start('🔄 正在重置prompt模板...');
+      if (resetPromptTemplate()) {
+        promptSpinner.stop('✅ Prompt模板已重置为默认值');
+      } else {
+        promptSpinner.fail('❌ Prompt模板重置失败');
+      }
+      return;
     }
     
-    // 检查仓库路径是否有效
-    try {
-      const pathSpinner = spinner.start(`检查仓库路径: ${repoPath}`);
-      execSync(`git -C "${repoPath}" rev-parse --is-inside-work-tree`, { stdio: 'ignore' });
-      pathSpinner.stop(`仓库路径有效: ${repoPath}`);
-    } catch (error) {
-      console.error(colorize(`错误: 指定的路径 "${repoPath}" 不是有效的Git仓库`, 'red'));
-      process.exit(1);
-    }
-    
-    // 如果使用AI总结，建议使用简洁模式
-    if (aiSummary && !simpleMode) {
-      console.log(colorize('提示: 使用AI总结功能时，建议添加 --simple 参数以获得最佳结果', 'yellow'));
-    }
-    
-    // 如果使用极简模式，直接输出简化的日志
-    if (simpleMode && !includeStats && !includePatch && !showBranches && !showTags) {
-      const logSpinner = spinner.start(`正在获取 ${author} 在 ${since} 至 ${until} 期间的提交记录...`);
-      const simpleCommand = `git -C "${repoPath}" log --author="${author}" --since="${since}" --until="${until}" --pretty=format:"%ad: %s%n%b%n" --date=format:"%Y-%m-%d %H:%M:%S"${noMerges ? ' --no-merges' : ''}${maxCount ? ` --max-count=${maxCount}` : ''}`;
-      
+    // 添加设置prompt模板的功能
+    if (args['set-prompt-template']) {
+      const templatePath = args['set-prompt-template'];
       try {
-        const result = execSync(simpleCommand, { encoding: 'utf-8' });
-        logSpinner.stop(`找到提交记录`);
-        
-        if (!result.trim()) {
-          const message = `在指定时间范围内没有找到 ${author} 的提交记录。`;
-          console.log(colorize(message, 'yellow'));
-          
-          if (outputFile) {
-            fs.writeFileSync(outputFile, message, 'utf-8');
-            console.log(colorize(`结果已保存到文件: ${outputFile}`, 'green'));
-          }
-          
-          return;
+        const promptSpinner = spinner.start(`📄 正在读取prompt模板文件: ${templatePath}`);
+        const templateContent = fs.readFileSync(templatePath, 'utf-8');
+        if (setPromptTemplate(templateContent)) {
+          promptSpinner.stop(`✅ Prompt模板已更新`);
+        } else {
+          promptSpinner.fail(`❌ Prompt模板更新失败`);
         }
-        
-        // 如果需要AI总结
-        let aiSummaryResult = '';
-        if (aiSummary) {
-          try {
-            const summarySpinner = spinner.start('正在使用AI总结提交记录...');
-            aiSummaryResult = await summarizeWithAI(result, author, since, until);
-            summarySpinner.stop('AI总结完成');
-            
-            // 输出AI总结结果
-            console.log(`\n${colorize(`${author} 的工作总结 (${since} 至 ${until})`, 'bright')}\n${colorize('='.repeat((`${author} 的工作总结 (${since} 至 ${until})`).length), 'bright')}\n`);
-            console.log(aiSummaryResult);
-            
-            // 如果指定了输出文件，保存AI总结结果
-            if (outputFile) {
-              const fileSpinner = spinner.start(`正在保存AI总结到文件: ${outputFile}`);
-              fs.writeFileSync(outputFile, `# ${author} 的工作总结 (${since} 至 ${until})\n\n${aiSummaryResult}`, 'utf-8');
-              fileSpinner.stop(`AI总结已保存到文件: ${outputFile}`);
-              return;
-            }
-          } catch (error) {
-            console.error(colorize(`AI总结失败: ${error.message}`, 'red'));
-            // 如果AI总结失败，继续输出原始日志
-          }
-        }
-        
-        // 如果不需要AI总结或者AI总结失败，输出原始日志
-        if (!aiSummary || !aiSummaryResult) {
-          // 输出结果
-          console.log(`\n${author} 的Git提交日志 (${since} 至 ${until})\n`);
-          console.log(result);
-          
-          // 如果指定了输出文件，保存结果
-          if (outputFile && !aiSummaryResult) {
-            const fileSpinner = spinner.start(`正在保存结果到文件: ${outputFile}`);
-            const outputContent = `# ${author} 的Git提交日志 (${since} 至 ${until})\n\n${result}`;
-            fs.writeFileSync(outputFile, outputContent, 'utf-8');
-            fileSpinner.stop(`结果已保存到文件: ${outputFile}`);
-          }
-        }
-        
         return;
       } catch (error) {
-        logSpinner.fail(`获取提交记录失败: ${error.message}`);
+        console.error(colorize(`读取模板文件失败: ${error.message}`, 'red'));
         process.exit(1);
       }
     }
     
-    // 默认或自定义格式
-    let format = args.format;
-    if (!format) {
-      if (simpleMode) {
-        format = '%ad: %s';
-      } else if (briefMode) {
-        format = '%h - %an (%ad): %s';
-      } else {
-        format = '%H%n作者: %an <%ae>%n日期: %ad%n标题: %s%n%n%b';
-      }
+    // 显示NPX运行信息
+    showNpxInfo();
+    
+    // 使用参数值或默认配置
+    const useLocalRepo = args.local === true;
+    const author = config.default_author;
+    const since = args.since || config.default_since;
+    const until = args.until || config.default_until;
+    
+    // 其他参数从配置文件获取
+    const simpleMode = true; // 总是使用简单模式
+    const aiSummary = true;  // 总是使用AI总结
+    const outputFile = args.output;
+    
+    // 参数验证
+    if (!author) {
+      console.error(colorize('错误: 配置文件中未设置默认作者。请使用 --set-default-author="用户名" 设置默认作者', 'red'));
+      process.exit(1);
     }
     
-    // 构建git命令
-    let gitCommand = `git -C "${repoPath}" log --author="${author}" --since="${since}" --until="${until}" --pretty=format:"${format}" --date=format:"%Y-%m-%d %H:%M:%S"`;
-    
-    // 添加附加选项
-    if (noMerges) {
-      gitCommand += ' --no-merges';
-    }
-    
-    if (maxCount) {
-      gitCommand += ` --max-count=${maxCount}`;
-    }
-    
-    // 如果需要统计信息，使用较简单的方式获取提交哈希值
-    const hashSpinner = spinner.start('正在获取提交哈希...');
-    const hashCommand = `git -C "${repoPath}" log --author="${author}" --since="${since}" --until="${until}" --pretty=format:"%H"${noMerges ? ' --no-merges' : ''}${maxCount ? ` --max-count=${maxCount}` : ''}`;
-    const commitHashes = execSync(hashCommand, { encoding: 'utf-8' }).split('\n').filter(hash => hash.trim());
-    hashSpinner.stop(`找到 ${commitHashes.length} 个提交`);
-    
-    if (commitHashes.length === 0) {
-      const message = `在指定时间范围内没有找到 ${author} 的提交记录。`;
-      console.log(colorize(message, 'yellow'));
+    // 多仓库处理 - 如果不是--local模式，尝试处理配置中的所有仓库
+    if (!useLocalRepo) {
+      const multiRepoOptions = { 
+        noMerges: true,
+        simpleMode: true 
+      };
+      const multiRepoLogs = await getLogsFromMultipleRepos(author, since, until, multiRepoOptions);
       
-      if (outputFile) {
-        fs.writeFileSync(outputFile, message, 'utf-8');
-        console.log(colorize(`结果已保存到文件: ${outputFile}`, 'green'));
-      }
-      
-      return;
-    }
-    
-    // 如果需要AI总结但当前不是简洁模式，则需要先获取简洁格式的日志用于AI总结
-    let aiSummaryContent = '';
-    if (aiSummary && !simpleMode) {
-      const aiLogCommand = `git -C "${repoPath}" log --author="${author}" --since="${since}" --until="${until}" --pretty=format:"%ad: %s%n%b%n" --date=format:"%Y-%m-%d %H:%M:%S"${noMerges ? ' --no-merges' : ''}${maxCount ? ` --max-count=${maxCount}` : ''}`;
-      aiSummaryContent = execSync(aiLogCommand, { encoding: 'utf-8' });
-    }
-    
-    // 准备输出内容
-    let output = '';
-    let consoleOutput = '';
-    
-    // 添加标题
-    const title = `${author} 的Git提交日志 (${since} 至 ${until})`;
-    output += `# ${title}\n\n`;
-    consoleOutput += useColor ? `\n${colorize(title, 'bright')}\n${colorize('='.repeat(title.length), 'bright')}\n\n` : `\n# ${title}\n\n`;
-    
-    const countInfo = `共找到 ${commitHashes.length} 条提交记录`;
-    output += `${countInfo}\n\n`;
-    consoleOutput += useColor ? `${colorize(countInfo, 'yellow')}\n\n` : `${countInfo}\n\n`;
-    
-    // 获取并显示每个提交的详细信息
-    for (let i = 0; i < commitHashes.length; i++) {
-      const hash = commitHashes[i];
-      const commitNumber = i + 1;
-      
-      // 提交标题
-      const commitTitle = simpleMode 
-        ? `提交 ${commitNumber}/${commitHashes.length}` 
-        : `提交 ${commitNumber}/${commitHashes.length}: ${hash.substring(0, 8)}`;
-      
-      output += `## ${commitTitle}\n\n`;
-      consoleOutput += useColor 
-        ? `\n${colorize(commitTitle, 'bright')}\n${colorize('-'.repeat(commitTitle.length), 'bright')}\n\n` 
-        : `\n## ${commitTitle}\n\n`;
-      
-      // 基于模式获取不同级别的提交信息
-      if (simpleMode) {
-        // 仅获取简化信息（日期和提交消息）
-        const simpleDetailsSpinner = spinner.start(`正在获取提交 ${commitNumber} 的基本信息...`);
-        const simpleDetails = getCommitSimpleDetails(repoPath, hash);
-        simpleDetailsSpinner.stop();
+      // 如果有多仓库日志结果
+      if (multiRepoLogs) {
+        if (multiRepoLogs.trim() === '') {
+          console.log(colorize(`📭 在所有配置的仓库中未找到 ${author} 在 ${since} 至 ${until} 期间的提交记录。`, 'yellow'));
+          return;
+        }
         
-        output += `${simpleDetails}\n\n`;
-        consoleOutput += useColor
-          ? simpleDetails.split('\n').map((line, index) => {
-              // 着色第一行（日期）
-              if (index === 0) {
-                return colorize(line, 'green');
-              } else {
-                return line;
-              }
-            }).join('\n') + '\n\n'
-          : simpleDetails + '\n\n';
+        // 生成AI总结
+        try {
+          const summarySpinner = spinner.start('🧠 正在总结所有仓库的提交记录...');
           
-        // 如果是简洁模式且需要AI总结，收集内容
-        if (aiSummary && i === 0) {
-          aiSummaryContent = output;
+          // 直接调用带spinner参数的summarizeWithAI函数
+          const aiResult = await summarizeWithAI(multiRepoLogs, author, since, until, summarySpinner);
+          
+          // 如果指定了输出文件，保存AI总结结果
+          if (outputFile) {
+            const fileSpinner = spinner.start(`💾 正在保存多仓库AI总结到文件: ${outputFile}`);
+            fs.writeFileSync(outputFile, `# 📊 ${author} 的多仓库工作总结 (${since} 至 ${until})\n\n${aiResult}`, 'utf-8');
+            fileSpinner.stop(`✅ 多仓库AI总结已保存到文件: ${outputFile}`);
+          }
+          return;
+        } catch (error) {
+          console.error(colorize(`❌ AI总结失败: ${error.message}`, 'red'));
         }
-      } else {
-        // 获取标准提交详情
-        const detailsSpinner = spinner.start(`正在获取提交 ${hash.substring(0, 8)} 的详细信息...`);
-        const { details, branches, tags } = getCommitDetails(repoPath, hash);
-        detailsSpinner.stop();
-        
-        // 输出基本提交信息
-        output += `${details}\n`;
-        consoleOutput += useColor 
-          ? details.split('\n').map(line => {
-              if (line.startsWith('commit ')) {
-                return colorize(line, 'yellow');
-              } else if (line.startsWith('Author: ')) {
-                return colorize(line, 'green');
-              } else if (line.startsWith('Date: ') || line.startsWith('AuthorDate: ') || line.startsWith('CommitDate: ')) {
-                return colorize(line, 'cyan');
-              } else {
-                return line;
-              }
-            }).join('\n') + '\n'
-          : details + '\n';
-        
-        // 显示分支信息
-        if (showBranches) {
-          const branchesInfo = `所属分支: ${branches}`;
-          output += `${branchesInfo}\n`;
-          consoleOutput += useColor 
-            ? `${colorize('所属分支:', 'magenta')} ${branches}\n` 
-            : `${branchesInfo}\n`;
-        }
-        
-        // 显示标签信息
-        if (showTags) {
-          const tagsInfo = `相关标签: ${tags}`;
-          output += `${tagsInfo}\n`;
-          consoleOutput += useColor 
-            ? `${colorize('相关标签:', 'magenta')} ${tags}\n` 
-            : `${tagsInfo}\n`;
-        }
-      }
-      
-      // 添加额外的换行
-      output += '\n';
-      consoleOutput += '\n';
-      
-      // 添加统计信息
-      if (includeStats) {
-        const statsSpinner = spinner.start(`正在获取提交 ${hash.substring(0, 8)} 的文件统计信息...`);
-        const stats = getCommitStats(repoPath, hash);
-        statsSpinner.stop();
-        
-        const statsTitle = '文件修改统计';
-        output += `### ${statsTitle}\n\n${stats}\n\n`;
-        consoleOutput += useColor 
-          ? `${colorize(statsTitle, 'cyan')}\n\n${stats}\n\n` 
-          : `### ${statsTitle}\n\n${stats}\n\n`;
-      }
-      
-      // 添加补丁信息
-      if (includePatch) {
-        const patchSpinner = spinner.start(`正在获取提交 ${hash.substring(0, 8)} 的代码变更...`);
-        const patch = getCommitPatch(repoPath, hash);
-        patchSpinner.stop();
-        
-        const patchTitle = '代码变更';
-        output += `### ${patchTitle}\n\n\`\`\`diff\n${patch}\n\`\`\`\n\n`;
-        consoleOutput += useColor 
-          ? `${colorize(patchTitle, 'cyan')}\n\n\`\`\`diff\n${colorizePatch(patch, useColor)}\n\`\`\`\n\n` 
-          : `### ${patchTitle}\n\n\`\`\`diff\n${patch}\n\`\`\`\n\n`;
-      }
-      
-      // 添加分隔线
-      if (i < commitHashes.length - 1) {
-        output += '---\n\n';
-        consoleOutput += useColor 
-          ? colorize('---------------------------------------------------\n\n', 'dim') 
-          : '---\n\n';
+        return;
       }
     }
     
-    // 如果需要，添加汇总统计
-    if (includeStats) {
-      try {
-        const summarySpinner = spinner.start('正在生成汇总统计...');
-        const summaryCommand = `git -C "${repoPath}" log --author="${author}" --since="${since}" --until="${until}" --numstat${noMerges ? ' --no-merges' : ''}${maxCount ? ` --max-count=${maxCount}` : ''} | grep -v '^commit' | grep -v '^Author:' | grep -v '^Date:' | grep -v '^$' | awk '{ files += 1; inserted += $1; deleted += $2 } END { print "文件修改总数:", files, "\\n添加行数:", inserted, "\\n删除行数:", deleted }'`;
-        const summary = execSync(summaryCommand, { encoding: 'utf-8' });
-        summarySpinner.stop('汇总统计完成');
-        
-        const summaryTitle = '汇总统计';
-        output += `## ${summaryTitle}\n\n` + summary + '\n';
-        consoleOutput += useColor ? `\n${colorize(summaryTitle, 'bright')}\n${colorize('-'.repeat(summaryTitle.length), 'bright')}\n\n` : `\n## ${summaryTitle}\n\n`;
-        
-        // 为控制台添加彩色统计
-        if (useColor) {
-          const lines = summary.split('\n');
-          lines.forEach(line => {
-            if (line.includes('文件修改总数:')) {
-              consoleOutput += line.replace(/文件修改总数: (\d+)/, `文件修改总数: ${colorize('$1', 'cyan')}`) + '\n';
-            } else if (line.includes('添加行数:')) {
-              consoleOutput += line.replace(/添加行数: (\d+)/, `添加行数: ${colorize('$1', 'green')}`) + '\n';
-            } else if (line.includes('删除行数:')) {
-              consoleOutput += line.replace(/删除行数: (\d+)/, `删除行数: ${colorize('$1', 'red')}`) + '\n';
-            } else {
-              consoleOutput += line + '\n';
-            }
-          });
-        } else {
-          consoleOutput += summary + '\n';
-        }
-      } catch (error) {
-        const errorMsg = '无法生成汇总统计';
-        output += `## ${errorMsg}\n\n`;
-        consoleOutput += useColor ? `\n${colorize(errorMsg, 'red')}\n\n` : `\n## ${errorMsg}\n\n`;
-      }
+    // 单仓库处理逻辑 - 当使用local模式或没有配置多个仓库时
+    const repoPath = useLocalRepo ? process.cwd() : Object.values(config.repositories)[0] || process.cwd();
+    
+    // 检查仓库路径是否有效
+    try {
+      const pathSpinner = spinner.start(`🔍 检查仓库路径: ${repoPath}`);
+      execSync(`git -C "${repoPath}" rev-parse --is-inside-work-tree`, { stdio: 'ignore' });
+      pathSpinner.stop(`✅ 仓库路径有效: ${repoPath}`);
+    } catch (error) {
+      console.error(colorize(`❌ 错误: 指定的路径 "${repoPath}" 不是有效的Git仓库`, 'red'));
+      process.exit(1);
     }
     
-    // 如果需要AI总结
-    if (aiSummary && aiSummaryContent) {
-      try {
-        const summarySpinner = spinner.start('正在使用AI总结提交记录...');
-        const aiResult = await summarizeWithAI(aiSummaryContent, author, since, until);
-        summarySpinner.stop('AI总结完成');
+    // 获取简化格式的日志
+    const logSpinner = spinner.start(`🔍 正在获取 ${author} 在 ${since} 至 ${until} 期间的提交记录...`);
+    const simpleCommand = `git -C "${repoPath}" log --author="${author}" --since="${since}" --until="${until}" --pretty=format:"%ad: %s%n%b%n" --date=format:"%Y-%m-%d %H:%M:%S" --no-merges`;
+    
+    try {
+      const result = execSync(simpleCommand, { encoding: 'utf-8' });
+      logSpinner.stop(`✅ 找到提交记录`);
+      
+      if (!result.trim()) {
+        const message = `📭 在指定时间范围内没有找到 ${author} 的提交记录。`;
+        console.log(colorize(message, 'yellow'));
         
-        // 输出AI总结结果
-        console.log(`\n${colorize('AI总结工作日报', 'bright')}\n${colorize('='.repeat('AI总结工作日报'.length), 'bright')}\n`);
-        console.log(aiResult);
+        if (outputFile) {
+          fs.writeFileSync(outputFile, message, 'utf-8');
+          console.log(colorize(`💾 结果已保存到文件: ${outputFile}`, 'green'));
+        }
+        
+        return;
+      }
+      
+      // 生成AI总结
+      try {
+        const summarySpinner = spinner.start('🧠 正在总结提交记录...');
+        
+        // 直接调用带spinner参数的summarizeWithAI函数
+        const aiSummaryResult = await summarizeWithAI(result, author, since, until, summarySpinner);
         
         // 如果指定了输出文件，保存AI总结结果
         if (outputFile) {
-          const fileSpinner = spinner.start(`正在保存AI总结到文件: ${outputFile}`);
-          fs.writeFileSync(outputFile, aiResult, 'utf-8');
-          fileSpinner.stop(`AI总结已保存到文件: ${outputFile}`);
+          const fileSpinner = spinner.start(`💾 正在保存AI总结到文件: ${outputFile}`);
+          fs.writeFileSync(outputFile, `# ${author} 的工作总结 (${since} 至 ${until})\n\n${aiSummaryResult}`, 'utf-8');
+          fileSpinner.stop(`✅ AI总结已保存到文件: ${outputFile}`);
           return;
         }
       } catch (error) {
-        console.error(colorize(`AI总结失败: ${error.message}`, 'red'));
+        console.error(colorize(`❌ AI总结失败: ${error.message}`, 'red'));
         // 如果AI总结失败，输出原始日志
-        console.log(consoleOutput);
+        console.log(`\n📋 ${author} 的Git提交日志 (${since} 至 ${until})\n`);
+        console.log(result);
+        
+        // 如果指定了输出文件，保存结果
+        if (outputFile) {
+          const fileSpinner = spinner.start(`💾 正在保存结果到文件: ${outputFile}`);
+          const outputContent = `# ${author} 的Git提交日志 (${since} 至 ${until})\n\n${result}`;
+          fs.writeFileSync(outputFile, outputContent, 'utf-8');
+          fileSpinner.stop(`✅ 结果已保存到文件: ${outputFile}`);
+        }
       }
-    } else {
-      // 输出结果
-      console.log(consoleOutput);
-    }
-    
-    // 如果指定了输出文件且没有使用AI总结，保存原始结果
-    if (outputFile && !aiSummary) {
-      const fileSpinner = spinner.start(`正在保存结果到文件: ${outputFile}`);
-      fs.writeFileSync(outputFile, output, 'utf-8');
-      fileSpinner.stop(`结果已保存到文件: ${outputFile}`);
+    } catch (error) {
+      logSpinner.fail(`❌ 获取提交记录失败: ${error.message}`);
+      process.exit(1);
     }
   } catch (error) {
-    console.error(colorize('执行出错:', 'red'), error.message);
+    console.error(colorize('❌ 执行出错:', 'red'), error.message);
     process.exit(1);
   }
 }
 
 // 执行主函数
 getGitLogs();
+
+// 如果直接调用setupConfigInteractive进行测试（需要注释掉主函数调用）
+// setupConfigInteractive(['api_key', 'default_author', 'repositories'])
+//   .then(() => console.log('配置测试已完成'));
+
+// 如果需要测试checkConfig（需要注释掉主函数调用）
+// console.log(checkConfig());
