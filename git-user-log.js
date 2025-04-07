@@ -17,6 +17,7 @@ const fs = require('fs');
 const https = require('https');
 const os = require('os');
 const readline = require('readline');
+const ora = require('ora');
 
 // 检测是否通过npx运行
 const isRunningWithNpx = process.env.npm_lifecycle_event === 'npx' || 
@@ -375,63 +376,41 @@ function fixConfigFile() {
 // 显示帮助
 function showHelp() {
   console.log(`
-${colorize('✨ 获取指定用户和时间范围的Git日志 ✨', 'bright')}
+使用方法: g2log [选项]
 
-${colorize('📋 使用方法:', 'yellow')} 
-  g2log [--since="2023-01-01"] [--until="2023-12-31"] [选项]
+时间参数:
+  --since <date>          开始日期 (默认: 7天前)
+  --until <date>          结束日期 (默认: 今天)
+  --days <number>         查询最近n天的记录 (默认: 7)
 
-${colorize('🕒 时间参数:', 'green')}
-  --since="YYYY-MM-DD"     起始日期 (如未指定，使用配置文件中的默认值)
-  --until="YYYY-MM-DD"     结束日期 (如未指定，使用配置文件中的默认值)
-  --local                  使用本地仓库，忽略配置文件中的仓库设置
+显示设置:
+  --no-color             禁用彩色输出
+  --save                 保存结果到文件
+  --debug                显示调试信息
+  --show-prompt          显示完整的prompt内容
+  --version              显示当前版本号
 
-${colorize('🎨 显示设置:', 'blue')}
-  --color, --force-color   强制启用彩色输出 (即使在管道或重定向中)
-  --no-color               禁用彩色输出
-  --nosave                 不保存到文件 (仅在终端显示)
-  --save="file.txt"        保存结果到指定文件
-  --debug, --show-prompt   显示发送给AI的完整提示内容
+配置管理:
+  --config               启动交互式配置向导
+  --set-api-key         设置API密钥
+  --set-api-provider     设置API提供商 (OpenAI/DeepSeek)
+  --set-api-base-url     设置API基础URL
+  --set-ai-model         设置AI模型
+  --set-default-author   设置默认作者
+  --add-repo            添加仓库配置
+  --remove-repo         移除仓库配置
+  --list-repos          列出所有配置的仓库
+  --uninstall           删除g2log配置文件 (~/.git-user-log-config.json)
 
-${colorize('⚙️ 配置管理:', 'magenta')}
-  --config                 启动交互式配置向导
-  --skip-config-check      跳过配置检查
-  --set-api-key="KEY"      设置API密钥
-  --set-api-provider="PROVIDER"  设置API提供商 (deepseek或openai)
-  --set-api-url="URL"      设置API基础URL
-  --set-ai-model="MODEL"   设置AI模型 (默认: deepseek-chat，可选: deepseek-reasoner)
-  --set-default-author="NAME"  设置默认作者
-  --set-time-range --since="DATE" --until="DATE"  设置默认时间范围
-  --add-repo="ALIAS" --path="/path/to/repo"  添加仓库配置
-  --remove-repo="ALIAS"    删除仓库配置
-  --list-repos             列出所有配置的仓库
-  --set-prompt-template="file.txt"  从文件设置AI总结的prompt模板
-  --reset-prompt-template  重置AI总结的prompt模板为默认值
-  --fix-config             修复配置文件格式问题
-  --uninstall              删除g2log配置文件 (~/.git-user-log-config.json)
-  --help                   显示帮助信息
-
-${colorize('📝 示例:', 'cyan')}
-  # 使用配置的默认值生成今日工作总结 (处理配置中的所有仓库)
-  g2log
-  
-  # 指定时间范围
-  g2log --since="2023-01-01" --until="2023-12-31"
-  
-  # 使用本地仓库
-  g2log --local
-  
-  # 强制启用颜色显示（在使用管道或重定向时有用）
-  g2log --color | less -R
-  
-  # 启动交互式配置向导
+示例:
+  g2log --since "2024-01-01" --until "2024-01-31"
+  g2log --days 30
   g2log --config
-  
-  # 设置配置
-  g2log --set-default-author="张三"
-  g2log --set-ai-model="deepseek-reasoner"
-  g2log --set-api-provider="openai"
-  g2log --set-api-url="https://api.openai.com"
-  g2log --add-repo="frontend" --path="/path/to/frontend-project"
+  g2log --set-api-key "your-api-key"
+  g2log --add-repo "alias" "path/to/repo"
+  g2log --remove-repo "alias"
+  g2log --list-repos
+  g2log --version
 `);
   process.exit(0);
 }
@@ -805,54 +784,54 @@ async function getOpenAIResponse(apiKey, prompt, modelName, apiBaseURL, spinner 
       
       // 确定使用http还是https
       const protocol = urlObj.protocol === 'https:' ? require('https') : require('http');
-      
-      // 创建请求
-      const req = protocol.request(options, (res) => {
+    
+    // 创建请求
+    const req = protocol.request(options, (res) => {
         // 检查状态码
-        if (res.statusCode !== 200) {
-          let errorData = '';
-          res.on('data', chunk => {
-            errorData += chunk.toString();
-          });
-          res.on('end', () => {
+      if (res.statusCode !== 200) {
+        let errorData = '';
+        res.on('data', chunk => {
+          errorData += chunk.toString();
+        });
+        res.on('end', () => {
             let errorMessage = `OpenAI API请求失败 (${res.statusCode})`;
-            try {
-              const parsedError = JSON.parse(errorData);
+          try {
+            const parsedError = JSON.parse(errorData);
               errorMessage += `: ${JSON.stringify(parsedError)}`;
-            } catch (e) {
+          } catch (e) {
               errorMessage += `: ${errorData}`;
             }
             if (spinner) spinner.fail(`❌ ${errorMessage}`);
             reject(new Error(errorMessage));
-          });
-          return;
-        }
-        
+        });
+        return;
+      }
+      
         let fullContent = '';
-        let buffer = '';
-        
+      let buffer = '';
+      
         // 处理数据
-        res.on('data', (chunk) => {
-          // 将新的数据添加到缓冲区
-          buffer += chunk.toString();
+      res.on('data', (chunk) => {
+        // 将新的数据添加到缓冲区
+        buffer += chunk.toString();
+        
+        // 尝试从缓冲区中提取完整的SSE消息
+        let match;
+        const dataRegex = /data: (.*?)\n\n/gs;
+        
+        while ((match = dataRegex.exec(buffer)) !== null) {
+          const data = match[1];
           
-          // 尝试从缓冲区中提取完整的SSE消息
-          let match;
-          const dataRegex = /data: (.*?)\n\n/gs;
+          // 跳过 [DONE] 消息
+          if (data === '[DONE]') continue;
           
-          while ((match = dataRegex.exec(buffer)) !== null) {
-            const data = match[1];
+          try {
+            const parsedData = JSON.parse(data);
             
-            // 跳过 [DONE] 消息
-            if (data === '[DONE]') continue;
-            
-            try {
-              const parsedData = JSON.parse(data);
-              
               // 获取内容增量
               if (parsedData.choices && 
-                  parsedData.choices[0] && 
-                  parsedData.choices[0].delta && 
+                parsedData.choices[0] && 
+                parsedData.choices[0].delta && 
                   parsedData.choices[0].delta.content) {
                 const content = parsedData.choices[0].delta.content;
                 fullContent += content;
@@ -1003,27 +982,27 @@ async function getDeepSeekResponse(apiKey, prompt, modelName, apiBaseURL, spinne
                 
                 // 直接输出内容增量到控制台
                 process.stdout.write(content);
-              }
-            } catch (err) {
-              // 忽略解析错误
             }
+          } catch (err) {
+            // 忽略解析错误
           }
-          
-          // 保留可能不完整的最后一部分
-          const lastIndex = buffer.lastIndexOf('\n\n');
-          if (lastIndex !== -1) {
-            buffer = buffer.substring(lastIndex + 2);
-          }
-        });
+        }
         
+        // 保留可能不完整的最后一部分
+        const lastIndex = buffer.lastIndexOf('\n\n');
+        if (lastIndex !== -1) {
+          buffer = buffer.substring(lastIndex + 2);
+        }
+      });
+      
         // 处理结束
-        res.on('end', () => {
+      res.on('end', () => {
           if (spinner) spinner.stop('✅ AI响应已接收');
           console.log(); // 添加换行符
           resolve(fullContent);
-        });
       });
-      
+    });
+    
       // 处理请求错误
       req.on('error', (error) => {
         if (spinner) spinner.fail(`❌ DeepSeek API网络错误: ${error.message}`);
@@ -1032,7 +1011,7 @@ async function getDeepSeekResponse(apiKey, prompt, modelName, apiBaseURL, spinne
       
       // 发送请求体
       req.write(JSON.stringify(data));
-      req.end();
+    req.end();
     } catch (error) {
       if (spinner) spinner.fail(`❌ DeepSeek API错误: ${error.message}`);
       reject(error);
@@ -1488,15 +1467,35 @@ async function setupConfigInteractive() {
 
 // 主函数
 async function getGitLogs() {
+  const args = parseArgs();
+
+  // 显示帮助信息
+  if (args['help']) {
+    showHelp();
+    return;
+  }
+
+  // 显示版本信息
+  if (args['version']) {
+    const packageJson = require('./package.json');
+    console.log(`g2log version ${packageJson.version}`);
+    return;
+  }
+
+  // 删除配置文件
+  if (args['uninstall']) {
+    const spinner = ora('正在删除配置文件...').start();
+    const success = removeConfigFile();
+    if (success) {
+      spinner.succeed('配置文件已删除，如需完全卸载请运行: npm uninstall -g g2log');
+    } else {
+      spinner.fail('配置文件删除失败，可能文件不存在或无权限访问');
+    }
+    return;
+  }
+
   try {
     const spinner = createSpinner();
-    const args = parseArgs();
-    
-    // 显示帮助信息
-    if (args.help) {
-      showHelp();
-      return;
-    }
     
     // 检查是否要显示自定义配置向导
     if (args.config) {
@@ -1561,18 +1560,6 @@ async function getGitLogs() {
     
     // 加载配置（在配置检查和可能的设置之后）
     const config = loadConfig();
-    
-    // 删除配置文件
-    if (args['uninstall']) {
-      const uninstallSpinner = spinner.start('🗑️ 正在删除g2log配置文件...');
-      if (removeConfigFile()) {
-        uninstallSpinner.stop('✅ g2log配置文件已成功删除');
-        console.log(colorize('💡 提示: 如需完全卸载g2log，还需执行 npm uninstall -g g2log', 'yellow'));
-      } else {
-        uninstallSpinner.fail('❌ 配置文件不存在或删除失败');
-      }
-      return;
-    }
     
     // 修复配置文件
     if (args['fix-config']) {

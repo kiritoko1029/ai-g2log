@@ -66,13 +66,20 @@ npx g2log [--since="2023-01-01"] [--until="2023-12-31"] [选项]
 
 ### 命令行参数
 
+时间参数:
 - `--since="YYYY-MM-DD"` - 起始日期（如未指定，使用配置中的默认值）
 - `--until="YYYY-MM-DD"` - 结束日期（如未指定，使用配置中的默认值）
-- `--local` - 使用本地仓库，忽略配置文件中的仓库设置
-- `--output="文件路径"` - 将输出保存到指定文件
+- `--days=N` - 查询最近N天的记录
 
-### 配置管理命令
+显示设置:
+- `--no-color` - 禁用彩色输出
+- `--save` 或 `--output="文件路径"` - 将输出保存到文件
+- `--debug` - 显示调试信息
+- `--show-prompt` - 显示完整的prompt内容
+- `--version` - 显示当前版本号
 
+配置管理命令:
+- `--config` - 启动交互式配置向导
 - `--set-api-key="KEY"` - 设置API密钥
 - `--set-ai-model="MODEL"` - 设置AI模型（默认: deepseek-chat）
 - `--set-api-provider="PROVIDER"` - 设置API提供商（deepseek或openai）
@@ -85,6 +92,7 @@ npx g2log [--since="2023-01-01"] [--until="2023-12-31"] [选项]
 - `--set-prompt-template="file.txt"` - 从文件设置AI总结的prompt模板
 - `--reset-prompt-template` - 重置AI总结的prompt模板为默认值
 - `--fix-config` - 修复配置文件格式问题
+- `--uninstall` - 删除g2log配置文件
 - `--help` - 显示帮助信息
 
 ### 配置文件
@@ -95,7 +103,7 @@ npx g2log [--since="2023-01-01"] [--until="2023-12-31"] [选项]
 {
   "api_key": "your-api-key-here",
   "default_author": "张三",
-  "default_since": "today",
+  "default_since": "7 days ago",
   "default_until": "today",
   "model": "deepseek-chat",
   "api_base_url": "https://api.deepseek.com",
@@ -104,7 +112,7 @@ npx g2log [--since="2023-01-01"] [--until="2023-12-31"] [选项]
     "前端": "/path/to/frontend-project",
     "后端": "/path/to/backend-project"
   },
-  "prompt_template": "请根据下面的Git提交记录，用3-5句话简洁地总结一天的工作内容..."
+  "prompt_template": "请根据下面的Git提交记录，用3-5句话简洁地总结一天的工作内容。\n\n以下是Git提交记录:\n\n{{GIT_LOGS}}\n\n要求：\n1. 按项目和日期组织内容\n2. 每个项目每天的工作内容用3-5句话概括\n3. 使用清晰、专业但不晦涩的语言\n4. 突出重要的功能开发、问题修复和优化改进\n5. 适合放入工作日报的简洁描述\n6. 输出格式为：【日期】：\n                  【项目名称】- 【工作内容概述】\n                  【项目名称】- 【工作内容概述】\n7. 回复不要出现多余的内容，非必要不要用markdown格式"
 }
 ```
 

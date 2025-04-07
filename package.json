@@ -34,5 +34,8 @@
   "bugs": {
     "url": "https://github.com/chenxiangcai/git-user-log/issues"
   },
-  "homepage": "https://github.com/chenxiangcai/git-user-log#readme"
+  "homepage": "https://github.com/chenxiangcai/git-user-log#readme",
+  "dependencies": {
+    "ora": "^8.2.0"
+  }
 }
