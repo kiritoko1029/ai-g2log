@@ -9,4 +9,5 @@ config.json
 .vscode/
 .idea/
 g2log-*.tgz
-local-install.sh 
+local-install.sh
+package-lock.json 
