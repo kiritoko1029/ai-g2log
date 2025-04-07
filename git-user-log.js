@@ -407,6 +407,7 @@ ${colorize('⚙️ 配置管理:', 'magenta')}
   --set-prompt-template="file.txt"  从文件设置AI总结的prompt模板
   --reset-prompt-template  重置AI总结的prompt模板为默认值
   --fix-config             修复配置文件格式问题
+  --uninstall              删除g2log配置文件 (~/.git-user-log-config.json)
   --help                   显示帮助信息
 
 ${colorize('📝 示例:', 'cyan')}
@@ -930,7 +931,7 @@ async function getDeepSeekResponse(apiKey, prompt, modelName, apiBaseURL, spinne
   console.log(colorize('📄 系统角色: ' + data.messages[0].content, 'dim'));
   console.log(colorize('💬 提示内容预览: ' + data.messages[1].content.substring(0, 150) + '...', 'dim'));
   
-  if (spinner) spinner.update('🔄 正在向DeepSeek发送请求...\n');
+  if (spinner) spinner.update('🔄 正在AI发送请求...\n');
   
   return new Promise((resolve, reject) => {
     try {
@@ -1017,7 +1018,7 @@ async function getDeepSeekResponse(apiKey, prompt, modelName, apiBaseURL, spinne
         
         // 处理结束
         res.on('end', () => {
-          if (spinner) spinner.stop('✅ DeepSeek响应已接收');
+          if (spinner) spinner.stop('✅ AI响应已接收');
           console.log(); // 添加换行符
           resolve(fullContent);
         });
@@ -1314,9 +1315,10 @@ async function setupConfigInteractive() {
 
     // 步骤1: 设置API提供商
     console.log(colorize('\n📡 步骤1: 设置API提供商', 'yellow'));
+    console.log(colorize('  (仅作为一个备注,示例：openai, deepseek, xxx)', 'cyan'));
     let apiProvider = config.api_provider || '';
     
-    const providerInput = await question(colorize(`  请选择API提供商 [${apiProvider ? apiProvider : 'OpenAI/DeepSeek'}]: `, 'green'));
+    const providerInput = await question(colorize(`  请选择API提供商 [${apiProvider ? apiProvider : 'openai'}]: `, 'green'));
     if (providerInput.trim() !== '') {
       apiProvider = providerInput.trim();
     } else if (apiProvider === '') {
@@ -1329,6 +1331,7 @@ async function setupConfigInteractive() {
 
     // 步骤2: 设置API基础URL
     console.log(colorize('\n🔗 步骤2: 设置API基础URL', 'yellow'));
+    console.log(colorize('  (示例: https://api.openai.com, https://api.deepseek.com 或其他API服务地址)', 'cyan'));
     
     // 根据提供商设置默认值
     let defaultBaseURL = config.api_base_url || '';
@@ -1347,6 +1350,12 @@ async function setupConfigInteractive() {
     // 步骤3: 设置AI模型
     console.log(colorize('\n🤖 步骤3: 设置AI模型', 'yellow'));
     
+    // 根据提供商显示不同的模型示例
+    const modelExamples = config.api_provider === 'openai' ? 
+      'gpt-3.5-turbo, gpt-4, gpt-4-turbo' : 
+      'deepseek-chat, deepseek-coder, deepseek-v3';
+    console.log(colorize(`  (常用模型示例: ${modelExamples})`, 'cyan'));
+    
     // 根据提供商设置默认模型
     let defaultModel = config.ai_model || '';
     if (!defaultModel) {
@@ -1363,6 +1372,7 @@ async function setupConfigInteractive() {
 
     // 步骤4: 设置API密钥
     console.log(colorize('\n🔑 步骤4: 设置API密钥', 'yellow'));
+    console.log(colorize('  (格式示例: sk-abcdefg123456789... 密钥会安全存储在本地配置文件中)', 'cyan'));
     const existingKey = config.api_key || '';
     const keyInput = await question(colorize(`  请输入API密钥${existingKey ? ' [已配置，按Enter保留]' : ''}: `, 'green'));
     if (keyInput.trim() !== '') {
@@ -1376,6 +1386,7 @@ async function setupConfigInteractive() {
 
     // 步骤5: 设置默认作者
     console.log(colorize('\n👤 步骤5: 设置默认作者', 'yellow'));
+    console.log(colorize('  (示例: 张三, user@example.com, 或Git提交时使用的用户名)', 'cyan'));
     const existingAuthor = config.default_author || '';
     const authorInput = await question(colorize(`  请输入默认作者名称 [${existingAuthor}]: `, 'green'));
     config.default_author = authorInput.trim() || existingAuthor;
@@ -1383,6 +1394,7 @@ async function setupConfigInteractive() {
 
     // 步骤6: 设置默认时间范围（可选）
     console.log(colorize('\n🕒 步骤6: 设置默认时间范围（可选）', 'yellow'));
+    console.log(colorize('  (支持格式: "7 days ago", "1 week ago", "yesterday", "2023-01-01", "last monday")', 'cyan'));
     
     // 获取当前的默认值
     const defaultSince = config.default_since || '7 days ago';
@@ -1398,6 +1410,13 @@ async function setupConfigInteractive() {
 
     // 步骤7: 仓库配置（可选）
     console.log(colorize('\n📂 步骤7: 仓库配置（可选）', 'yellow'));
+    console.log(colorize('  (仓库别名示例: frontend, backend, main-project)', 'cyan'));
+    
+    // 根据操作系统提供路径示例
+    const repoPathExample = process.platform === 'win32' ? 
+      'C:\\项目\\前端仓库' : 
+      '/Users/用户名/projects/前端仓库';
+    console.log(colorize(`  (仓库路径示例: ${repoPathExample})`, 'cyan'));
     
     // 显示当前配置的仓库
     const repos = config.repositories || {};
@@ -1423,7 +1442,8 @@ async function setupConfigInteractive() {
           continue;
         }
         
-        // 获取仓库路径
+        // 获取仓库路径，添加示例提示
+        console.log(colorize(`  (请输入Git仓库的绝对路径，示例: ${repoPathExample})`, 'cyan'));
         const repoPath = await question(colorize('  请输入仓库路径（绝对路径）: ', 'green'));
         if (!repoPath.trim()) {
           console.log(colorize('  ❌ 仓库路径不能为空', 'red'));
@@ -1489,7 +1509,7 @@ async function getGitLogs() {
     if (!args['set-api-key'] && !args['set-default-author'] && !args['add-repo'] && 
         !args['fix-config'] && !args['remove-repo'] && !args['list-repos'] && 
         !args['set-prompt-template'] && !args['reset-prompt-template'] &&
-        !args['skip-config-check']) {
+        !args['skip-config-check'] && !args['uninstall']) {
       
       // 检查配置状态
       const configStatus = checkConfig();
@@ -1541,6 +1561,18 @@ async function getGitLogs() {
     
     // 加载配置（在配置检查和可能的设置之后）
     const config = loadConfig();
+    
+    // 删除配置文件
+    if (args['uninstall']) {
+      const uninstallSpinner = spinner.start('🗑️ 正在删除g2log配置文件...');
+      if (removeConfigFile()) {
+        uninstallSpinner.stop('✅ g2log配置文件已成功删除');
+        console.log(colorize('💡 提示: 如需完全卸载g2log，还需执行 npm uninstall -g g2log', 'yellow'));
+      } else {
+        uninstallSpinner.fail('❌ 配置文件不存在或删除失败');
+      }
+      return;
+    }
     
     // 修复配置文件
     if (args['fix-config']) {
@@ -1815,3 +1847,44 @@ getGitLogs();
 
 // 如果需要测试checkConfig（需要注释掉主函数调用）
 // console.log(checkConfig());
+
+// 重置prompt模板为默认值
+function resetPromptTemplate() {
+  try {
+    const config = loadConfig();
+    if (config.prompt_template) {
+      delete config.prompt_template;
+      return saveConfig(config);
+    }
+    return true; // 如果没有设置自定义模板，则视为重置成功
+  } catch (error) {
+    console.error(`❌ 重置prompt模板失败: ${error.message}`);
+    return false;
+  }
+}
+
+// 删除配置文件
+function removeConfigFile() {
+  try {
+    if (fs.existsSync(CONFIG_PATH)) {
+      fs.unlinkSync(CONFIG_PATH);
+      return true;
+    }
+    return false; // 文件不存在
+  } catch (error) {
+    console.error(`❌ 删除配置文件失败: ${error.message}`);
+    return false;
+  }
+}
+
+// 设置API提供商
+function setAPIProvider(provider) {
+  try {
+    const config = loadConfig();
+    config.api_provider = provider;
+    return saveConfig(config);
+  } catch (error) {
+    console.error(`❌ 设置API提供商失败: ${error.message}`);
+    return false;
+  }
+}

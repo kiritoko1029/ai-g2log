@@ -1,6 +1,6 @@
 {
   "name": "g2log",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "description": "查询特定用户和时间范围的Git提交记录并通过AI进行总结，可通过npx直接运行",
   "main": "git-user-log.js",
   "bin": {
@@ -34,6 +34,5 @@
   "bugs": {
     "url": "https://github.com/chenxiangcai/git-user-log/issues"
   },
-  "homepage": "https://github.com/chenxiangcai/git-user-log#readme",
-  "dependencies": {}
+  "homepage": "https://github.com/chenxiangcai/git-user-log#readme"
 }
