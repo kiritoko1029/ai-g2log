@@ -676,6 +676,12 @@ Git提交记录:
     let aiResponse = '';
     const providerLower = apiProvider.toLowerCase();
     
+    // 输出AI总结的标题信息
+    console.log(`\n${colorize('📊 ' + author + ' 的工作总结', 'bright')}`);
+    console.log(`${colorize('📅 时间范围: ' + since + ' 至 ' + until, 'green')}`);
+    console.log(`${colorize('🤖 使用模型: ' + modelName, 'cyan')}`);
+    console.log(`${colorize('=' .repeat(30), 'bright')}\n`);
+
     // 根据提供商名称选择对应的实现
     if (providerLower === 'openai') {
       aiResponse = await getOpenAIResponse(apiKey, prompt, modelName, apiBaseURL, spinner);
@@ -686,43 +692,6 @@ Git提交记录:
 
     // 停止spinner并显示成功消息
     if (spinner) spinner.stop('✅ AI总结已生成');
-    
-    // 格式化并输出AI总结
-    console.log(`\n${colorize('📊 ' + author + ' 的工作总结', 'bright')}`);
-    console.log(`${colorize('📅 时间范围: ' + since + ' 至 ' + until, 'green')}`);
-    console.log(`${colorize('🤖 使用模型: ' + modelName, 'cyan')}`);
-    console.log(`${colorize('=' .repeat(30), 'bright')}\n`);
-    
-    // 分段输出并优化格式
-    const lines = aiResponse.split('\n');
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      
-      // 为标题添加颜色
-      if (line.startsWith('# ')) {
-        console.log(colorize(line, 'bright'));
-      } 
-      // 为子标题添加颜色
-      else if (line.startsWith('## ')) {
-        console.log(colorize(line, 'yellow'));
-      } 
-      // 为列表项添加图标和颜色
-      else if (line.trim().startsWith('- ')) {
-        console.log(colorize('  • ' + line.trim().substring(2), 'reset'));
-      } 
-      // 为数字列表添加颜色
-      else if (/^\d+\.\s/.test(line.trim())) {
-        console.log(colorize('  ' + line.trim(), 'reset'));
-      }
-      // 为分隔线添加颜色
-      else if (line.trim().startsWith('---')) {
-        console.log(colorize('  ' + '─'.repeat(30), 'dim'));
-      }
-      // 普通文本
-      else {
-        console.log(colorize(line, 'reset'));
-      }
-    }
     
     return aiResponse;
   } catch (error) {
@@ -758,7 +727,7 @@ async function getOpenAIResponse(apiKey, prompt, modelName, apiBaseURL, spinner 
   };
   
   // 打印请求内容
-  console.log(colorize('\n📨 发送给OpenAI的请求:', 'cyan'));
+  console.log(colorize('\n📨 发送给AI的请求:', 'cyan'));
   console.log(colorize(`📌 API端点: ${url}`, 'dim'));
   console.log(colorize(`🤖 使用模型: ${data.model}`, 'dim'));
   console.log(colorize(`🌡️ 温度: ${data.temperature}`, 'dim'));
@@ -766,7 +735,7 @@ async function getOpenAIResponse(apiKey, prompt, modelName, apiBaseURL, spinner 
   console.log(colorize('📄 系统角色: ' + data.messages[0].content, 'dim'));
   console.log(colorize('💬 提示内容预览: ' + data.messages[1].content.substring(0, 150) + '...', 'dim'));
   
-  if (spinner) spinner.update('🔄 正在向OpenAI发送请求...');
+  if (spinner) spinner.update('🔄 正在向AI发送请求...\n');
   
   return new Promise((resolve, reject) => {
     try {
@@ -853,7 +822,7 @@ async function getOpenAIResponse(apiKey, prompt, modelName, apiBaseURL, spinner 
         
         // 处理结束
         res.on('end', () => {
-          if (spinner) spinner.stop('✅ OpenAI响应已接收');
+          if (spinner) spinner.stop('✅ AI响应已结束');
           console.log(); // 添加换行符
           resolve(fullContent);
         });
