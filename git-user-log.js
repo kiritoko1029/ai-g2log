@@ -754,76 +754,107 @@ async function getOpenAIResponse(apiKey, prompt, modelName, apiBaseURL, spinner 
       // 确定使用http还是https
       const protocol = urlObj.protocol === 'https:' ? require('https') : require('http');
     
-    // 创建请求
-    const req = protocol.request(options, (res) => {
+      // 创建请求
+      const req = protocol.request(options, (res) => {
         // 检查状态码
-      if (res.statusCode !== 200) {
-        let errorData = '';
-        res.on('data', chunk => {
-          errorData += chunk.toString();
-        });
-        res.on('end', () => {
+        if (res.statusCode !== 200) {
+          let errorData = '';
+          res.on('data', chunk => {
+            errorData += chunk.toString();
+          });
+          res.on('end', () => {
             let errorMessage = `OpenAI API请求失败 (${res.statusCode})`;
-          try {
-            const parsedError = JSON.parse(errorData);
+            try {
+              const parsedError = JSON.parse(errorData);
               errorMessage += `: ${JSON.stringify(parsedError)}`;
-          } catch (e) {
+            } catch (e) {
               errorMessage += `: ${errorData}`;
             }
             if (spinner) spinner.fail(`❌ ${errorMessage}`);
             reject(new Error(errorMessage));
-        });
-        return;
-      }
-      
+          });
+          return;
+        }
+        
         let fullContent = '';
-      let buffer = '';
-      
+        let buffer = '';
+        
         // 处理数据
-      res.on('data', (chunk) => {
-        // 将新的数据添加到缓冲区
-        buffer += chunk.toString();
-        
-        // 尝试从缓冲区中提取完整的SSE消息
-        let match;
-        const dataRegex = /data: (.*?)\n\n/gs;
-        
-        while ((match = dataRegex.exec(buffer)) !== null) {
-          const data = match[1];
+        res.on('data', (chunk) => {
+          // 将新的数据添加到缓冲区
+          const data = chunk.toString();
+          buffer += data;
           
-          // 跳过 [DONE] 消息
-          if (data === '[DONE]') continue;
+          // 尝试从缓冲区中提取完整的SSE消息
+          const messages = buffer.split('\n\n');
           
-          try {
-            const parsedData = JSON.parse(data);
+          // 处理除了最后一个可能不完整的消息之外的所有消息
+          for (let i = 0; i < messages.length - 1; i++) {
+            const message = messages[i].trim();
+            if (!message) continue; // 跳过空消息
             
-              // 获取内容增量
-              if (parsedData.choices && 
-                parsedData.choices[0] && 
-                parsedData.choices[0].delta && 
-                  parsedData.choices[0].delta.content) {
-                const content = parsedData.choices[0].delta.content;
-                fullContent += content;
-                
-                // 直接输出内容增量到控制台
-                process.stdout.write(content);
+            // 处理SSE格式的消息
+            if (message.startsWith('data: ')) {
+              const content = message.substring(6); // 移除 'data: ' 前缀
+              
+              // 跳过[DONE]消息
+              if (content === '[DONE]') continue;
+              
+              try {
+                const parsed = JSON.parse(content);
+                if (parsed.choices && 
+                    parsed.choices[0] && 
+                    parsed.choices[0].delta && 
+                    parsed.choices[0].delta.content) {
+                  const contentPart = parsed.choices[0].delta.content;
+                  fullContent += contentPart;
+                  
+                  // 直接输出内容增量到控制台
+                  process.stdout.write(contentPart);
+                }
+              } catch (err) {
+                // 忽略解析错误，但在调试模式下输出
+                if (process.argv.includes('--debug')) {
+                  console.error(`解析错误: ${err.message} for content: ${content}`);
+                }
               }
-            } catch (err) {
-              // 忽略解析错误
             }
           }
           
-          // 保留可能不完整的最后一部分
-          const lastIndex = buffer.lastIndexOf('\n\n');
-          if (lastIndex !== -1) {
-            buffer = buffer.substring(lastIndex + 2);
-          }
+          // 保留最后一个可能不完整的消息
+          buffer = messages[messages.length - 1];
         });
         
-        // 处理结束
+        // 处理响应结束
         res.on('end', () => {
+          // 处理缓冲区中可能剩余的内容
+          if (buffer.trim()) {
+            const lines = buffer.split('\n');
+            for (const line of lines) {
+              if (line.startsWith('data: ') && line.substring(6) !== '[DONE]') {
+                try {
+                  const parsed = JSON.parse(line.substring(6));
+                  if (parsed.choices && 
+                      parsed.choices[0] && 
+                      parsed.choices[0].delta && 
+                      parsed.choices[0].delta.content) {
+                    const contentPart = parsed.choices[0].delta.content;
+                    fullContent += contentPart;
+                    
+                    // 直接输出内容增量到控制台
+                    process.stdout.write(contentPart);
+                  }
+                } catch (err) {
+                  // 忽略解析错误
+                }
+              }
+            }
+          }
+          
+          // 确保输出后有换行符
+          console.log(); // 强制添加换行符
+          
           if (spinner) spinner.stop('✅ AI响应已结束');
-          console.log(); // 添加换行符
           resolve(fullContent);
         });
       });
@@ -879,7 +910,7 @@ async function getDeepSeekResponse(apiKey, prompt, modelName, apiBaseURL, spinne
   console.log(colorize('📄 系统角色: ' + data.messages[0].content, 'dim'));
   console.log(colorize('💬 提示内容预览: ' + data.messages[1].content.substring(0, 150) + '...', 'dim'));
   
-  if (spinner) spinner.update('🔄 正在AI发送请求...\n');
+  if (spinner) spinner.update('🔄 正在向AI发送请求...\n');
   
   return new Promise((resolve, reject) => {
     try {
@@ -926,52 +957,83 @@ async function getDeepSeekResponse(apiKey, prompt, modelName, apiBaseURL, spinne
         // 处理数据
         res.on('data', (chunk) => {
           // 将新的数据添加到缓冲区
-          buffer += chunk.toString();
+          const data = chunk.toString();
+          buffer += data;
           
           // 尝试从缓冲区中提取完整的SSE消息
-          let match;
-          const dataRegex = /data: (.*?)\n\n/gs;
+          const messages = buffer.split('\n\n');
           
-          while ((match = dataRegex.exec(buffer)) !== null) {
-            const data = match[1];
+          // 处理除了最后一个可能不完整的消息之外的所有消息
+          for (let i = 0; i < messages.length - 1; i++) {
+            const message = messages[i].trim();
+            if (!message) continue; // 跳过空消息
             
-            // 跳过 [DONE] 消息
-            if (data === '[DONE]') continue;
-            
-            try {
-              const parsedData = JSON.parse(data);
+            // 处理SSE格式的消息
+            if (message.startsWith('data: ')) {
+              const content = message.substring(6); // 移除 'data: ' 前缀
               
-              // 获取内容增量
-              if (parsedData.choices && 
-                  parsedData.choices[0] && 
-                  parsedData.choices[0].delta && 
-                  parsedData.choices[0].delta.content) {
-                const content = parsedData.choices[0].delta.content;
-                fullContent += content;
-                
-                // 直接输出内容增量到控制台
-                process.stdout.write(content);
+              // 跳过[DONE]消息
+              if (content === '[DONE]') continue;
+              
+              try {
+                const parsed = JSON.parse(content);
+                if (parsed.choices && 
+                    parsed.choices[0] && 
+                    parsed.choices[0].delta && 
+                    parsed.choices[0].delta.content) {
+                  const contentPart = parsed.choices[0].delta.content;
+                  fullContent += contentPart;
+                  
+                  // 直接输出内容增量到控制台
+                  process.stdout.write(contentPart);
+                }
+              } catch (err) {
+                // 忽略解析错误，但在调试模式下输出
+                if (process.argv.includes('--debug')) {
+                  console.error(`解析错误: ${err.message} for content: ${content}`);
+                }
+              }
             }
-          } catch (err) {
-            // 忽略解析错误
           }
-        }
+          
+          // 保留最后一个可能不完整的消息
+          buffer = messages[messages.length - 1];
+        });
         
-        // 保留可能不完整的最后一部分
-        const lastIndex = buffer.lastIndexOf('\n\n');
-        if (lastIndex !== -1) {
-          buffer = buffer.substring(lastIndex + 2);
-        }
+        // 处理响应结束
+        res.on('end', () => {
+          // 处理缓冲区中可能剩余的内容
+          if (buffer.trim()) {
+            const lines = buffer.split('\n');
+            for (const line of lines) {
+              if (line.startsWith('data: ') && line.substring(6) !== '[DONE]') {
+                try {
+                  const parsed = JSON.parse(line.substring(6));
+                  if (parsed.choices && 
+                      parsed.choices[0] && 
+                      parsed.choices[0].delta && 
+                      parsed.choices[0].delta.content) {
+                    const contentPart = parsed.choices[0].delta.content;
+                    fullContent += contentPart;
+                    
+                    // 直接输出内容增量到控制台
+                    process.stdout.write(contentPart);
+                  }
+                } catch (err) {
+                  // 忽略解析错误
+                }
+              }
+            }
+          }
+          
+          // 确保输出后有换行符
+          console.log(); // 强制添加换行符
+          
+          if (spinner) spinner.stop('✅ AI响应已结束');
+          resolve(fullContent);
+        });
       });
       
-        // 处理结束
-      res.on('end', () => {
-          if (spinner) spinner.stop('✅ AI响应已接收');
-          console.log(); // 添加换行符
-          resolve(fullContent);
-      });
-    });
-    
       // 处理请求错误
       req.on('error', (error) => {
         if (spinner) spinner.fail(`❌ DeepSeek API网络错误: ${error.message}`);
@@ -980,7 +1042,7 @@ async function getDeepSeekResponse(apiKey, prompt, modelName, apiBaseURL, spinne
       
       // 发送请求体
       req.write(JSON.stringify(data));
-    req.end();
+      req.end();
     } catch (error) {
       if (spinner) spinner.fail(`❌ DeepSeek API错误: ${error.message}`);
       reject(error);
