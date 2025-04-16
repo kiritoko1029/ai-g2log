@@ -1,6 +1,6 @@
 {
   "name": "g2log",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "description": "查询特定用户和时间范围的Git提交记录并通过AI进行总结，可通过npx直接运行",
   "main": "git-user-log.js",
   "bin": {
