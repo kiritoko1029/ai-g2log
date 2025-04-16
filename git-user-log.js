@@ -17,7 +17,13 @@ const fs = require('fs');
 const https = require('https');
 const os = require('os');
 const readline = require('readline');
-const ora = require('ora');
+// 改用动态导入
+let ora;
+import('ora').then(module => {
+  ora = module.default;
+}).catch(err => {
+  console.error('无法加载ora模块:', err);
+});
 
 // 检测是否通过npx运行
 const isRunningWithNpx = process.env.npm_lifecycle_event === 'npx' || 
@@ -256,7 +262,36 @@ function listRepositories() {
 
 // 创建一个高级spinner
 function createSpinner() {
-  const spinner = {
+  // 如果ora模块未加载完成或不支持，提供一个简单的替代方案
+  if (!ora) {
+    return {
+      start(text) {
+        console.log(text);
+        return this;
+      },
+      stop(text) {
+        if (text) console.log(text);
+        return this;
+      },
+      fail(text) {
+        console.error(text || '操作失败');
+        return this;
+      },
+      update(text) {
+        console.log(text);
+        return this;
+      }
+    };
+  }
+  
+  // 原有的spinner实现
+  const spinner = ora({
+    color: 'cyan',
+    spinner: 'dots',
+    discardStdin: false
+  });
+  
+  return {
     start(text) {
       if (shouldUseColor) {
         process.stdout.write(colorize(`⏳ ${text}`, 'cyan'));
@@ -296,8 +331,6 @@ function createSpinner() {
       return this;
     }
   };
-  
-  return spinner;
 }
 
 // 修复配置文件
