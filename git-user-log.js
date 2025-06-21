@@ -897,7 +897,7 @@ async function getDeepSeekResponse(apiKey, prompt, modelName, apiBaseURL, spinne
       { role: 'user', content: prompt }
     ],
     temperature: 0.5,
-    max_tokens: 2048,
+    max_tokens: 20480,
     stream: true // 启用流式传输
   };
   
