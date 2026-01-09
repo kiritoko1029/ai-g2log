@@ -239,24 +239,194 @@ function removeRepository(alias) {
 // 获取仓库路径（支持别名）
 function getRepositoryPath(repoIdentifier, useLocalRepo) {
   if (useLocalRepo) {
-    return process.cwd();
+    return findGitRepository(process.cwd());
   }
-  
-  if (!repoIdentifier) return process.cwd();
-  
+
+  if (!repoIdentifier) return findGitRepository(process.cwd());
+
   const config = loadConfig();
   if (config.repositories && config.repositories[repoIdentifier]) {
     return config.repositories[repoIdentifier];
   }
-  
+
   // 如果不是别名，就当作路径处理
   return repoIdentifier;
+}
+
+// 向上搜索 Git 仓库根目录
+function findGitRepository(startPath) {
+  let currentPath = path.resolve(startPath);
+
+  while (currentPath !== path.dirname(currentPath)) {
+    const gitDir = path.join(currentPath, '.git');
+    if (fs.existsSync(gitDir)) {
+      return currentPath;
+    }
+    currentPath = path.dirname(currentPath);
+  }
+
+  // 检查根目录
+  const gitDir = path.join(currentPath, '.git');
+  if (fs.existsSync(gitDir)) {
+    return currentPath;
+  }
+
+  // 未找到 Git 仓库
+  return null;
 }
 
 // 列出所有配置的仓库
 function listRepositories() {
   const config = loadConfig();
   return config.repositories || {};
+}
+
+// 递归搜索指定目录下的所有 Git 仓库
+async function findGitRepositories(searchPath, maxDepth = 3, currentDepth = 0) {
+  const results = [];
+
+  // 如果达到最大深度，停止搜索
+  if (currentDepth >= maxDepth) {
+    return results;
+  }
+
+  try {
+    const entries = fs.readdirSync(searchPath, { withFileTypes: true });
+
+    for (const entry of entries) {
+      const fullPath = path.join(searchPath, entry.name);
+
+      // 跳过隐藏目录和特殊目录
+      if (entry.name.startsWith('.')) {
+        continue;
+      }
+
+      // 跳过 node_modules 等常见不需要搜索的目录
+      const skipDirs = ['node_modules', '.git', 'dist', 'build', 'target', 'vendor', '.vscode', '.idea'];
+      if (skipDirs.includes(entry.name)) {
+        continue;
+      }
+
+      if (entry.isDirectory()) {
+        // 检查是否是 Git 仓库
+        const gitDir = path.join(fullPath, '.git');
+        if (fs.existsSync(gitDir)) {
+          // 使用文件夹名作为别名
+          results.push({
+            alias: entry.name,
+            path: fullPath
+          });
+        } else {
+          // 递归搜索子目录
+          const subResults = await findGitRepositories(fullPath, maxDepth, currentDepth + 1);
+          results.push(...subResults);
+        }
+      }
+    }
+  } catch (error) {
+    // 忽略无权限访问的目录
+  }
+
+  return results;
+}
+
+// 从用户主目录搜索 Git 仓库并添加到配置
+async function findAndAddRepositories() {
+  const spinner = createSpinner();
+  const searchPaths = [
+    path.join(os.homedir(), 'Projects'),
+    path.join(os.homedir(), 'projects'),
+    path.join(os.homedir(), 'Workspace'),
+    path.join(os.homedir(), 'workspace'),
+    path.join(os.homedir(), 'Development'),
+    path.join(os.homedir(), 'development'),
+    path.join(os.homedir(), 'code'),
+    path.join(os.homedir(), 'src'),
+    os.homedir()
+  ];
+
+  console.log(colorize('\n🔍 正在搜索 Git 仓库...', 'cyan'));
+  console.log(colorize('搜索路径:', 'dim'), searchPaths.join(', '));
+  console.log('');
+
+  const allRepos = [];
+  const seenPaths = new Set();
+
+  for (const searchPath of searchPaths) {
+    if (!fs.existsSync(searchPath)) {
+      continue;
+    }
+
+    spinner.start(`🔍 正在搜索: ${searchPath}`);
+    const repos = await findGitRepositories(searchPath, 3);
+
+    for (const repo of repos) {
+      if (!seenPaths.has(repo.path)) {
+        seenPaths.add(repo.path);
+        allRepos.push(repo);
+      }
+    }
+  }
+
+  spinner.stop(`✅ 搜索完成，找到 ${allRepos.length} 个 Git 仓库`);
+
+  if (allRepos.length === 0) {
+    console.log(colorize('⚠️ 未找到任何 Git 仓库', 'yellow'));
+    console.log(colorize('💡 提示: 请将项目放在常见的目录中（如 ~/Projects, ~/Workspace 等）', 'cyan'));
+    return 0;
+  }
+
+  // 显示找到的仓库
+  console.log(colorize('\n📦 找到的仓库:', 'bright'));
+  console.log(colorize('─'.repeat(50), 'dim'));
+  allRepos.forEach((repo, index) => {
+    console.log(`  ${colorize(String(index + 1) + '.', 'green')} ${colorize(repo.alias, 'cyan')}: ${repo.path}`);
+  });
+  console.log(colorize('─'.repeat(50), 'dim'));
+
+  // 询问是否添加到配置
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+  });
+
+  const question = (query) => new Promise((resolve) => rl.question(query, resolve));
+
+  try {
+    const answer = await question(colorize('\n❓ 是否将这些仓库添加到配置？(y/n): ', 'cyan'));
+    rl.close();
+
+    if (answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes') {
+      const config = loadConfig();
+      if (!config.repositories) {
+        config.repositories = {};
+      }
+
+      let addedCount = 0;
+      for (const repo of allRepos) {
+        // 处理重名，添加后缀
+        let alias = repo.alias;
+        let counter = 1;
+        while (config.repositories[alias]) {
+          alias = `${repo.alias}-${counter}`;
+          counter++;
+        }
+
+        config.repositories[alias] = repo.path;
+        addedCount++;
+      }
+
+      saveConfig(config);
+      console.log(colorize(`\n✅ 已添加 ${addedCount} 个仓库到配置文件`, 'green'));
+      return addedCount;
+    } else {
+      console.log(colorize('ℹ️ 已取消', 'blue'));
+      return 0;
+    }
+  } catch (error) {
+    rl.close();
+    return 0;
+  }
 }
 
 // 创建一个高级spinner
@@ -428,6 +598,7 @@ function showHelp() {
   --version              显示当前版本号
 
 配置管理:
+  --find                 自动搜索并添加 Git 仓库到配置
   --config               启动交互式配置向导
   --set-api-key          设置API密钥
   --set-api-provider     设置API提供商 (OpenAI/DeepSeek)
@@ -440,6 +611,7 @@ function showHelp() {
   --uninstall            删除g2log配置文件 (~/.git-user-log-config.json)
 
 示例:
+  g2log --find                                    # 自动搜索并添加仓库
   g2log                                          # 获取所有作者的提交
   g2log --author "张三"                          # 只获取张三的提交
   g2log --since "2024-01-01" --until "2024-01-31"
@@ -1757,7 +1929,13 @@ async function getGitLogs() {
         process.exit(1);
       }
     }
-    
+
+    // 搜索并添加仓库
+    if (args.find) {
+      const count = await findAndAddRepositories();
+      process.exit(count > 0 ? 0 : 1);
+    }
+
     // 显示NPX运行信息
     showNpxInfo();
     
@@ -1811,9 +1989,21 @@ async function getGitLogs() {
     }
     
     // 单仓库处理逻辑 - 当使用local模式或没有配置多个仓库时
-    const repoPath = useLocalRepo ? process.cwd() : Object.values(config.repositories)[0] || process.cwd();
+    // 使用 findGitRepository 自动向上搜索 Git 仓库
+    let repoPath;
+    if (useLocalRepo) {
+      repoPath = findGitRepository(process.cwd());
+    } else {
+      repoPath = Object.values(config.repositories)[0] || findGitRepository(process.cwd());
+    }
     
     // 检查仓库路径是否有效
+    if (!repoPath) {
+      console.error(colorize(`❌ 错误: 未找到 Git 仓库。已从当前目录向上搜索到根目录。`, 'red'));
+      console.error(colorize(`💡 提示: 请确保你在 Git 仓库内运行此命令，或使用 --add-repo 添加仓库路径`, 'yellow'));
+      process.exit(1);
+    }
+
     try {
       const pathSpinner = spinner.start(`🔍 检查仓库路径: ${repoPath}`);
       execSync(`git -C "${repoPath}" rev-parse --is-inside-work-tree`, { stdio: 'ignore' });
