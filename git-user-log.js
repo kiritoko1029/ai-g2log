@@ -77,7 +77,6 @@ function colorize(text, color) {
 
 // 配置文件路径
 const CONFIG_PATH = path.join(os.homedir(), '.git-user-log-config.json');
-console.log(CONFIG_PATH);
 // 默认配置
 const DEFAULT_CONFIG = {
   api_key: '',
@@ -89,21 +88,21 @@ const DEFAULT_CONFIG = {
   api_provider: 'deepseek', // API提供商: deepseek或openai
   repositories: {},
   prompt_template: `
-请根据下面的Git提交记录，用3-5句话简洁地总结一天的工作内容。
+请根据下面的Git提交记录，用3-5句话简洁地总结工作内容。
 
 以下是Git提交记录:
 
 {{GIT_LOGS}}
 
 要求：
-1. 按项目和日期组织内容
-2. 每个项目每天的工作内容用3-5句话概括
+1. 按项目、日期和作者组织内容
+2. 每个项目每天每个作者的工作内容用3-5句话概括
 3. 使用清晰、专业但不晦涩的语言
 4. 突出重要的功能开发、问题修复和优化改进
 5. 适合放入工作日报的简洁描述
 6. 输出格式为：【日期】：
-                  【项目名称】- 【工作内容概述】
-                  【项目名称】- 【工作内容概述】
+                  【项目名称】 - 【作者】 - 【工作内容概述】
+                  【项目名称】 - 【作者】 - 【工作内容概述】
 7. 回复不要出现多余的内容，非必要不要用markdown格式
 `
 };
@@ -416,32 +415,38 @@ function showHelp() {
   --until <date>          结束日期 (默认: 今天)
   --days <number>         查询最近n天的记录 (默认: 7)
 
+过滤参数:
+  --author <name>         按作者过滤提交 (可选，不指定则获取所有作者)
+  --local                 仅处理本地仓库
+
 显示设置:
   --no-color             禁用彩色输出
   --save                 保存结果到文件
+  --output <file>        保存到指定文件
   --debug                显示调试信息
   --show-prompt          显示完整的prompt内容
   --version              显示当前版本号
 
 配置管理:
   --config               启动交互式配置向导
-  --set-api-key         设置API密钥
+  --set-api-key          设置API密钥
   --set-api-provider     设置API提供商 (OpenAI/DeepSeek)
-  --set-api-base-url     设置API基础URL
+  --set-api-url          设置API基础URL
   --set-ai-model         设置AI模型
-  --set-default-author   设置默认作者
-  --add-repo            添加仓库配置
-  --remove-repo         移除仓库配置
-  --list-repos          列出所有配置的仓库
-  --uninstall           删除g2log配置文件 (~/.git-user-log-config.json)
+  --set-default-author   设置默认作者 (可选)
+  --add-repo <alias> --path <path>   添加仓库配置
+  --remove-repo <alias>  移除仓库配置
+  --list-repos           列出所有配置的仓库
+  --uninstall            删除g2log配置文件 (~/.git-user-log-config.json)
 
 示例:
+  g2log                                          # 获取所有作者的提交
+  g2log --author "张三"                          # 只获取张三的提交
   g2log --since "2024-01-01" --until "2024-01-31"
-  g2log --days 30
+  g2log --days 30 --local
   g2log --config
   g2log --set-api-key "your-api-key"
-  g2log --add-repo "alias" "path/to/repo"
-  g2log --remove-repo "alias"
+  g2log --add-repo "alias" --path "/path/to/repo"
   g2log --list-repos
   g2log --version
 `);
@@ -678,7 +683,7 @@ async function summarizeWithAI(gitLogs, author, since, until, spinner = null) {
     const apiProvider = config.api_provider || 'openai';
     const apiBaseURL = config.api_base_url || '';
     
-    let prompt = config.prompt_template || `请根据以下Git提交记录，总结${author}在${since}到${until}期间的主要工作内容。
+    let prompt = config.prompt_template || `请根据以下Git提交记录，总结工作内容。
 按照类别进行归纳，突出重点任务和成就。
 用清晰的标题和小标题组织内容，确保总结全面且易于阅读。
 
@@ -686,10 +691,11 @@ Git提交记录:
 {{GIT_LOGS}}`;
 
     // 替换变量 - 支持多种变量格式以兼容用户自定义模板
+    const authorText = author || '所有作者';
     prompt = prompt.replace('{{GIT_LOGS}}', gitLogs)
                   .replace('{log_content}', gitLogs)  // 添加对{log_content}格式的支持
-                  .replace('{{AUTHOR}}', author)
-                  .replace('{author}', author)
+                  .replace('{{AUTHOR}}', authorText)
+                  .replace('{author}', authorText)
                   .replace('{{SINCE}}', since)
                   .replace('{since}', since)
                   .replace('{{UNTIL}}', until)
@@ -710,7 +716,8 @@ Git提交记录:
     const providerLower = apiProvider.toLowerCase();
     
     // 输出AI总结的标题信息
-    console.log(`\n${colorize('📊 ' + author + ' 的工作总结', 'bright')}`);
+    const summaryTitle = author ? `${author} 的工作总结` : '团队工作总结';
+    console.log(`\n${colorize('📊 ' + summaryTitle, 'bright')}`);
     console.log(`${colorize('📅 时间范围: ' + since + ' 至 ' + until, 'green')}`);
     console.log(`${colorize('🤖 使用模型: ' + modelName, 'cyan')}`);
     console.log(`${colorize('=' .repeat(30), 'bright')}\n`);
@@ -1108,8 +1115,13 @@ async function getLogsFromMultipleRepos(author, since, until, options) {
       spinner.update(`🔍 正在检查仓库 ${alias} (${repoPath})...`);
         execSync(`git -C "${repoPath}" rev-parse --is-inside-work-tree`, { stdio: 'ignore' });
       
-      // 构建Git命令
-      let command = `git -C "${repoPath}" log --author="${author}" --since="${since}" --until="${until}" --date=format:"%Y-%m-%d %H:%M:%S"`;
+      // 构建Git命令（author 现在是可选的）
+      let command = `git -C "${repoPath}" log --since="${since}" --until="${until}" --date=format:"%Y-%m-%d %H:%M:%S"`;
+
+      // 如果指定了 author，则添加过滤器
+      if (author && author.trim()) {
+        command = `git -C "${repoPath}" log --author="${author}" --since="${since}" --until="${until}" --date=format:"%Y-%m-%d %H:%M:%S"`;
+      }
       
       // 添加选项
       if (options.noMerges) {
@@ -1145,7 +1157,8 @@ async function getLogsFromMultipleRepos(author, since, until, options) {
   if (logCount > 0) {
     spinner.stop(`✅ 从仓库 ${repos > 1 ? `${repos} 个仓库` : Object.keys(config.repositories)[0]} 获取到 ${logCount} 条提交`);
   } else {
-    spinner.stop(`📭 未找到 ${author} 在 ${since} 至 ${until} 期间的提交记录`);
+    const authorText = author ? author : '所有作者';
+    spinner.stop(`📭 未找到 ${authorText} 在 ${since} 至 ${until} 期间的提交记录`);
   }
   
   return allLogs;
@@ -1222,7 +1235,7 @@ function checkConfig(silent = false) {
       if (!silent) console.log(colorize('⚠️ 检测到配置缺失: 配置文件不存在', 'red'));
       return {
         needsConfig: true,
-        missingConfig: ['api_key', 'default_author'],
+        missingConfig: ['api_key'],
         reason: '配置文件不存在',
         currentConfig: null
       };
@@ -1232,14 +1245,12 @@ function checkConfig(silent = false) {
     const config = loadConfig();
     const missingConfig = [];
     
-    // 检查关键配置是否存在
+    // 检查关键配置是否存在（default_author 现在是可选的）
     if (!config.api_key) {
       missingConfig.push('api_key');
     }
-    
-    if (!config.default_author) {
-      missingConfig.push('default_author');
-    }
+
+    // default_author 现在是可选的，不再强制要求
     
     // 设置默认时间范围（如果不存在）
     if (!config.default_since) {
@@ -1281,7 +1292,7 @@ function checkConfig(silent = false) {
     }
     return {
       needsConfig: true,
-      missingConfig: ['api_key', 'default_author'],
+      missingConfig: ['api_key'],
       reason: `配置文件解析错误: ${error.message}`,
       currentConfig: null
     };
@@ -1313,45 +1324,45 @@ async function setupConfigInteractive() {
         console.log(colorize('ℹ️  检测到现有配置，将在其基础上进行修改。', 'blue'));
       } else {
         console.log(colorize('ℹ️  未检测到配置文件，将创建新配置。', 'blue'));
-        config = { 
+        config = {
           repositories: {},
-          prompt_template: `请根据下面的Git提交记录，用3-5句话简洁地总结一天的工作内容。
+          prompt_template: `请根据下面的Git提交记录，用3-5句话简洁地总结工作内容。
 
 以下是Git提交记录:
 
 {log_content}
 
 要求：
-1. 按项目和日期组织内容
-2. 每个项目每天的工作内容用3-5句话概括
+1. 按项目、日期和作者组织内容
+2. 每个项目每天每个作者的工作内容用3-5句话概括
 3. 使用清晰、专业但不晦涩的语言
 4. 突出重要的功能开发、问题修复和优化改进
 5. 适合放入工作日报的简洁描述
 6. 输出格式为：【日期】：
-                  【项目名称】- 【工作内容概述】
-                  【项目名称】- 【工作内容概述】
+                  【项目名称】 - 【作者】 - 【工作内容概述】
+                  【项目名称】 - 【作者】 - 【工作内容概述】
 7. 回复不要出现多余的内容，非必要不要用markdown格式`
         };
       }
     } catch (error) {
       console.log(colorize('⚠️  读取配置文件时出错，将创建新配置。', 'yellow'));
-      config = { 
+      config = {
         repositories: {},
-        prompt_template: `请根据下面的Git提交记录，用3-5句话简洁地总结一天的工作内容。
+        prompt_template: `请根据下面的Git提交记录，用3-5句话简洁地总结工作内容。
 
 以下是Git提交记录:
 
 {log_content}
 
 要求：
-1. 按项目和日期组织内容
-2. 每个项目每天的工作内容用3-5句话概括
+1. 按项目、日期和作者组织内容
+2. 每个项目每天每个作者的工作内容用3-5句话概括
 3. 使用清晰、专业但不晦涩的语言
 4. 突出重要的功能开发、问题修复和优化改进
 5. 适合放入工作日报的简洁描述
 6. 输出格式为：【日期】：
-                  【项目名称】- 【工作内容概述】
-                  【项目名称】- 【工作内容概述】
+                  【项目名称】 - 【作者】 - 【工作内容概述】
+                  【项目名称】 - 【作者】 - 【工作内容概述】
 7. 回复不要出现多余的内容，非必要不要用markdown格式`
       };
     }
@@ -1427,13 +1438,19 @@ async function setupConfigInteractive() {
       console.log(colorize('  ℹ️ API密钥保持不变', 'blue'));
     }
 
-    // 步骤5: 设置默认作者
-    console.log(colorize('\n👤 步骤5: 设置默认作者', 'yellow'));
+    // 步骤5: 设置默认作者（可选）
+    console.log(colorize('\n👤 步骤5: 设置默认作者（可选）', 'yellow'));
     console.log(colorize('  (示例: 张三, user@example.com, 或Git提交时使用的用户名)', 'cyan'));
+    console.log(colorize('  (留空则不过滤，获取所有作者的提交记录)', 'cyan'));
     const existingAuthor = config.default_author || '';
-    const authorInput = await question(colorize(`  请输入默认作者名称 [${existingAuthor}]: `, 'green'));
-    config.default_author = authorInput.trim() || existingAuthor;
-    console.log(colorize(`  ✅ 默认作者已设置为: ${config.default_author}`, 'green'));
+    const authorInput = await question(colorize(`  请输入默认作者名称 [${existingAuthor || '留空'}] (可选，按Enter跳过): `, 'green'));
+    if (authorInput.trim() !== '') {
+      config.default_author = authorInput.trim();
+      console.log(colorize(`  ✅ 默认作者已设置为: ${config.default_author}`, 'green'));
+    } else {
+      config.default_author = '';
+      console.log(colorize(`  ℹ️ 未设置默认作者，将获取所有作者的提交`, 'blue'));
+    }
 
     // 步骤6: 设置默认时间范围（可选）
     console.log(colorize('\n🕒 步骤6: 设置默认时间范围（可选）', 'yellow'));
@@ -1582,42 +1599,21 @@ async function getGitLogs() {
         if (isRunningWithNpx || !fs.existsSync(CONFIG_PATH)) {
           // 对于NPX运行或首次使用（无配置文件），显示提示并询问是否配置
           console.log(colorize('\n⚠️ 检测到配置缺失: ' + configStatus.reason, 'yellow'));
-          if (configStatus.missingConfig.includes('default_author')) {
-            console.log(colorize('❗ 必须设置默认作者才能使用此工具。', 'red'));
-          }
-          
+
           // 创建readline接口进行简单询问
           const rl = readline.createInterface({
             input: process.stdin,
             output: process.stdout
           });
-          
+
           const question = (query) => new Promise((resolve) => rl.question(query, resolve));
           const answer = await question(colorize('❓ 是否现在进行配置？(y/n): ', 'cyan'));
           rl.close();
-          
+
           if (answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes') {
             // 启动配置向导
             await setupConfigInteractive();
-            // 配置完成后，重新加载配置
-            const config = loadConfig();
-            
-            // 如果依然缺少必要配置项，提示并退出
-            if (!config.default_author || config.default_author === '') {
-              console.log(colorize('\n❌ 错误: 未设置默认作者，这是必需的。', 'red'));
-              console.log(colorize('💡 请使用 g2log --set-default-author="用户名" 进行设置后再试。', 'yellow'));
-              process.exit(1);
-            }
-          } else if (configStatus.missingConfig.includes('default_author')) {
-            // 如果用户拒绝配置且缺少必要的default_author，提示并退出
-            console.log(colorize('\n❌ 错误: 未设置默认作者，这是必需的。', 'red'));
-            console.log(colorize('💡 请使用 g2log --set-default-author="用户名" 进行设置后再试。', 'yellow'));
-            process.exit(1);
           }
-        } else if (configStatus.missingConfig.includes('default_author')) {
-          // 对于非NPX运行但缺少必要default_author的情况，直接错误提示
-          console.error(colorize('❌ 错误: 配置文件中未设置默认作者。请使用 --set-default-author="用户名" 设置默认作者', 'red'));
-          process.exit(1);
         }
       }
     }
@@ -1765,22 +1761,18 @@ async function getGitLogs() {
     // 显示NPX运行信息
     showNpxInfo();
     
-    // 使用参数值或默认配置
+    // 使用参数值或默认配置（author 现在是可选的）
     const useLocalRepo = args.local === true;
-    const author = config.default_author;
+    const author = args.author || config.default_author || '';  // 支持命令行参数，可为空
     const since = args.since || config.default_since;
     const until = args.until || config.default_until;
-    
+
     // 其他参数从配置文件获取
     const simpleMode = true; // 总是使用简单模式
     const aiSummary = true;  // 总是使用AI总结
     const outputFile = args.output;
-    
-    // 参数验证
-    if (!author) {
-      console.error(colorize('错误: 配置文件中未设置默认作者。请使用 --set-default-author="用户名" 设置默认作者', 'red'));
-      process.exit(1);
-    }
+
+    // author 现在是可选的，不再强制验证
     
     // 多仓库处理 - 如果不是--local模式，尝试处理配置中的所有仓库
     if (!useLocalRepo) {
@@ -1832,15 +1824,21 @@ async function getGitLogs() {
     }
     
     // 获取简化格式的日志
-    const logSpinner = spinner.start(`🔍 正在获取 ${author} 在 ${since} 至 ${until} 期间的提交记录...`);
-    const simpleCommand = `git -C "${repoPath}" log --author="${author}" --since="${since}" --until="${until}" --pretty=format:"%ad: %s%n%b%n" --date=format:"%Y-%m-%d %H:%M:%S" --no-merges`;
+    const authorText = author ? author : '所有作者';
+    const logSpinner = spinner.start(`🔍 正在获取 ${authorText} 在 ${since} 至 ${until} 期间的提交记录...`);
+
+    // 构建Git命令（author 现在是可选的）
+    let simpleCommand = `git -C "${repoPath}" log --since="${since}" --until="${until}" --pretty=format:"%ad: %s%n%b%n" --date=format:"%Y-%m-%d %H:%M:%S" --no-merges`;
+    if (author && author.trim()) {
+      simpleCommand = `git -C "${repoPath}" log --author="${author}" --since="${since}" --until="${until}" --pretty=format:"%ad: %s%n%b%n" --date=format:"%Y-%m-%d %H:%M:%S" --no-merges`;
+    }
     
     try {
       const result = execSync(simpleCommand, { encoding: 'utf-8' });
       logSpinner.stop(`✅ 找到提交记录`);
       
       if (!result.trim()) {
-        const message = `📭 在指定时间范围内没有找到 ${author} 的提交记录。`;
+        const message = `📭 在指定时间范围内没有找到 ${authorText} 的提交记录。`;
         console.log(colorize(message, 'yellow'));
         
         if (outputFile) {
@@ -1861,20 +1859,22 @@ async function getGitLogs() {
         // 如果指定了输出文件，保存AI总结结果
         if (outputFile) {
           const fileSpinner = spinner.start(`💾 正在保存AI总结到文件: ${outputFile}`);
-          fs.writeFileSync(outputFile, `# ${author} 的工作总结 (${since} 至 ${until})\n\n${aiSummaryResult}`, 'utf-8');
+          const summaryTitle = author ? `${author} 的工作总结` : '团队工作总结';
+          fs.writeFileSync(outputFile, `# ${summaryTitle} (${since} 至 ${until})\n\n${aiSummaryResult}`, 'utf-8');
           fileSpinner.stop(`✅ AI总结已保存到文件: ${outputFile}`);
           return;
         }
       } catch (error) {
         console.error(colorize(`❌ AI总结失败: ${error.message}`, 'red'));
         // 如果AI总结失败，输出原始日志
-        console.log(`\n📋 ${author} 的Git提交日志 (${since} 至 ${until})\n`);
+        console.log(`\n📋 ${authorText} 的Git提交日志 (${since} 至 ${until})\n`);
         console.log(result);
-        
+
         // 如果指定了输出文件，保存结果
         if (outputFile) {
           const fileSpinner = spinner.start(`💾 正在保存结果到文件: ${outputFile}`);
-          const outputContent = `# ${author} 的Git提交日志 (${since} 至 ${until})\n\n${result}`;
+          const summaryTitle = author ? `${author} 的Git提交日志` : 'Git提交日志';
+          const outputContent = `# ${summaryTitle} (${since} 至 ${until})\n\n${result}`;
           fs.writeFileSync(outputFile, outputContent, 'utf-8');
           fileSpinner.stop(`✅ 结果已保存到文件: ${outputFile}`);
         }
