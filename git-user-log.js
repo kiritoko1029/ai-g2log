@@ -75,105 +75,592 @@ function colorize(text, color) {
   return colors[color] + text + colors.reset;
 }
 
+// Markdown 格式化函数 - 将 Markdown 转换为带颜色的终端输出
+function formatMarkdown(text) {
+  if (!shouldUseColor) return text;
+
+  let lines = text.split('\n');
+  let result = [];
+
+  for (let line of lines) {
+    // 标题处理
+    if (line.startsWith('# ')) {
+      result.push(colorize(line.substring(2), 'bright') + '\n');
+    } else if (line.startsWith('## ')) {
+      result.push(colorize(line.substring(3), 'cyan') + '\n');
+    } else if (line.startsWith('### ')) {
+      result.push(colorize(line.substring(4), 'green') + '\n');
+    } else if (line.startsWith('#### ')) {
+      result.push(colorize(line.substring(5), 'yellow') + '\n');
+    }
+    // 列表处理
+    else if (line.match(/^\s*[-*+]\s/)) {
+      const indent = line.match(/^\s*/)[0];
+      const content = line.replace(/^\s*[-*+]\s/, '');
+      result.push(indent + '• ' + content + '\n');
+    } else if (line.match(/^\s*\d+\.\s/)) {
+      result.push(line + '\n');
+    }
+    // 代码块
+    else if (line.startsWith('```')) {
+      result.push(colorize(line, 'dim') + '\n');
+    }
+    // 粗体
+    else if (line.includes('**')) {
+      let formattedLine = line.replace(/\*\*(.*?)\*\*/g, (match, p1) => {
+        return colorize(p1, 'bright');
+      });
+      result.push(formattedLine + '\n');
+    }
+    // 斜体
+    else if (line.includes('*')) {
+      let formattedLine = line.replace(/\*(.*?)\*/g, (match, p1) => {
+        return colorize(p1, 'cyan');
+      });
+      result.push(formattedLine + '\n');
+    }
+    // 分隔线
+    else if (line.match(/^---+$/)) {
+      result.push(colorize(line, 'dim') + '\n');
+    }
+    // 普通文本
+    else {
+      result.push(line + '\n');
+    }
+  }
+
+  return result.join('');
+}
+
+// 将文本转换为HTML格式
+function textToHtml(text, title = 'Git工作总结') {
+  const date = new Date().toLocaleString('zh-CN');
+
+  // 处理文本格式
+  let html = text
+    // 转义HTML特殊字符
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    // 处理标题
+    .replace(/^【(.*?)】/gm, '<h3>$1</h3>')
+    // 处理列表项
+    .replace(/^[\s]*[-•]\s+(.*)$/gm, '<li>$1</li>')
+    // 处理段落
+    .replace(/\n\n/g, '</p><p>')
+    .replace(/\n/g, '<br>');
+
+  return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${title}</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      line-height: 1.6;
+      color: #333;
+      background: #f5f5f5;
+      padding: 20px;
+    }
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+      background: white;
+      padding: 40px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    h1 {
+      color: #2c3e50;
+      margin-bottom: 10px;
+      font-size: 28px;
+    }
+    .meta {
+      color: #7f8c8d;
+      font-size: 14px;
+      margin-bottom: 30px;
+      padding-bottom: 20px;
+      border-bottom: 1px solid #eee;
+    }
+    h3 {
+      color: #3498db;
+      margin-top: 25px;
+      margin-bottom: 15px;
+      font-size: 18px;
+      padding-left: 10px;
+      border-left: 4px solid #3498db;
+    }
+    p {
+      margin-bottom: 15px;
+      line-height: 1.8;
+    }
+    li {
+      margin-bottom: 8px;
+      margin-left: 20px;
+      line-height: 1.6;
+    }
+    .footer {
+      margin-top: 40px;
+      padding-top: 20px;
+      border-top: 1px solid #eee;
+      color: #95a5a6;
+      font-size: 12px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>📊 ${title}</h1>
+    <div class="meta">生成时间: ${date}</div>
+    <p>${html}</p>
+    <div class="footer">
+      由 g2log 自动生成 | Git工作总结工具
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
+// 生成HTML文件并保存
+function generateHtmlAndSave(content, title = 'Git工作总结', author = '', since = '', until = '') {
+  const path = require('path');
+  const fs = require('fs');
+
+  // 生成详细的文件名：工作总结_{作者}_{起始日期}_to_{结束日期}.html
+  const authorName = author || '团队';
+
+  // 将日期格式化为 YYYY-MM-DD
+  const formatDate = (dateStr) => {
+    const date = new Date(dateStr);
+    if (isNaN(date.getTime())) return dateStr;
+    return date.toISOString().split('T')[0];
+  };
+
+  const sinceDate = formatDate(since);
+  const untilDate = formatDate(until);
+
+  const filename = `工作总结_${authorName}_${sinceDate}_to_${untilDate}.html`;
+  const filepath = path.join(CONFIG_DIR, filename);
+
+  // 写入HTML文件
+  const html = textToHtml(content, title);
+  fs.writeFileSync(filepath, html, 'utf-8');
+
+  console.log(colorize(`\n✅ HTML文件已保存: ${filepath}`, 'green'));
+  console.log(colorize(`💡 提示: 可以在浏览器中打开查看`, 'dim'));
+  return filepath;
+}
+
+// 生成HTML文件并在浏览器中打开
+function generateAndOpenHtml(content, title = 'Git工作总结') {
+  const os = require('os');
+  const path = require('path');
+  const fs = require('fs');
+  const { execSync } = require('child_process');
+
+  // 创建临时目录
+  const tmpDir = path.join(os.tmpdir(), 'g2log');
+  if (!fs.existsSync(tmpDir)) {
+    fs.mkdirSync(tmpDir, { recursive: true });
+  }
+
+  // 生成文件名（包含时间戳）
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const filename = `git-summary-${timestamp}.html`;
+  const filepath = path.join(tmpDir, filename);
+
+  // 写入HTML文件
+  const html = textToHtml(content, title);
+  fs.writeFileSync(filepath, html, 'utf-8');
+
+  console.log(colorize(`\n📄 HTML文件已生成: ${filepath}`, 'cyan'));
+  console.log(colorize(`💡 提示: 文件保存在临时目录，重启电脑后可能会被清除`, 'dim'));
+
+  // 在浏览器中打开
+  const platform = process.platform;
+  let command;
+
+  if (platform === 'darwin') {
+    command = `open '${filepath}'`;
+  } else if (platform === 'win32') {
+    command = `start '' '${filepath}'`;
+  } else {
+    command = `xdg-open '${filepath}'`;
+  }
+
+  console.log(colorize(`🌐 正在打开浏览器... (平台: ${platform})`, 'cyan'));
+
+  try {
+    execSync(command, { stdio: 'inherit' });
+    console.log(colorize('✅ 已在浏览器中打开', 'green'));
+  } catch (error) {
+    console.log(colorize(`\n⚠️  无法自动打开浏览器`, 'yellow'));
+    console.log(colorize(`命令: ${command}`, 'dim'));
+    console.log(colorize(`错误: ${error.message}`, 'red'));
+    console.log(colorize(`\n请手动打开文件:`, 'yellow'));
+    console.log(colorize(filepath, 'bright'));
+  }
+
+  return filepath;
+}
+
 // 配置文件路径
-const CONFIG_PATH = path.join(os.homedir(), '.git-user-log-config.json');
+const CONFIG_DIR = path.join(os.homedir(), '.g2log');
+const CONFIG_PATH = path.join(CONFIG_DIR, 'config.jsonc');
+const SCHEMA_PATH = path.join(CONFIG_DIR, 'schema.json');  // Schema 文件路径（用于 $schema 引用）
+const PROJECT_SCHEMA_PATH = path.join(__dirname, 'schema.json');  // 项目中的 schema 文件
+const OLD_CONFIG_PATH = path.join(os.homedir(), '.git-user-log-config.json');
+
 // 默认配置
 const DEFAULT_CONFIG = {
-  api_key: '',
   default_author: '',
   default_since: 'today',
   default_until: 'today',
-  model: 'deepseek-chat',  // 默认使用deepseek-chat模型
-  api_base_url: 'https://api.deepseek.com', // 默认使用DeepSeek API
-  api_provider: 'deepseek', // API提供商: deepseek或openai
+  current_profile: 'deepseek', // 当前使用的AI配置名称
+  profiles: {
+    deepseek: {
+      api_key: '',
+      api_base_url: 'https://api.deepseek.com',
+      model: 'deepseek-chat',
+      temperature: 0.5,
+      max_tokens: 20480,
+      enable_thinking: false
+    },
+    openai: {
+      api_key: '',
+      api_base_url: 'https://api.openai.com',
+      model: 'gpt-4',
+      temperature: 0.5,
+      max_tokens: 2048,
+      enable_thinking: false
+    },
+    zhipu: {
+      api_key: '',
+      api_base_url: 'https://open.bigmodel.cn/api/paas/v4',
+      model: 'glm-4',
+      temperature: 0.7,
+      max_tokens: 2048,
+      enable_thinking: false
+    }
+  },
   repositories: {},
   prompt_template: `
-请根据下面的Git提交记录，用3-5句话简洁地总结工作内容。
+请根据下面的Git提交记录生成工作总结。请根据实际提交的内容量和重要性灵活调整总结的详细程度。
 
 以下是Git提交记录:
 
 {{GIT_LOGS}}
 
 要求：
-1. 按项目、日期和作者组织内容
-2. 每个项目每天每个作者的工作内容用3-5句话概括
+1. 按日期和项目组织内容
+2. 根据提交量自适应调整总结详细程度：
+   - 提交较少时：简明扼要，突出关键成果
+   - 提交较多时：详细列出各项工作，确保重要内容不遗漏
+   - 重要功能开发、重大bug修复应详细说明
 3. 使用清晰、专业但不晦涩的语言
 4. 突出重要的功能开发、问题修复和优化改进
-5. 适合放入工作日报的简洁描述
-6. 输出格式为：【日期】：
-                  【项目名称】 - 【作者】 - 【工作内容概述】
-                  【项目名称】 - 【作者】 - 【工作内容概述】
-7. 回复不要出现多余的内容，非必要不要用markdown格式
+5. 适合放入工作日报，便于团队了解工作进展和复制
+6. 严格按照以下输出格式（每个项目一行，项目和内容在同一行）：
+   【日期】：YYYY-MM-DD
+   项目名称1: 工作内容描述
+   项目名称2: 工作内容描述
+   项目名称3: 工作内容描述
+
+   【日期】：YYYY-MM-DD
+   项目名称1: 工作内容描述
+   项目名称2: 工作内容描述
+7. 不同日期之间空一行分隔
+8. 同一天的不同项目直接换行，不空行
+9. 回复不要出现多余的内容，不要使用markdown格式，不要使用列表符号
 `
 };
+
+// ============================================================================
+// JSONC (JSON with Comments) 解析器
+// ============================================================================
+
+/**
+ * 解析 JSONC 格式的内容（支持注释和尾随逗号）
+ * @param {string} content - JSONC 格式的字符串
+ * @returns {object} 解析后的 JavaScript 对象
+ */
+function parseJSONC(content) {
+  try {
+    // 先尝试直接解析标准 JSON（处理控制字符等问题）
+    return JSON.parse(content);
+  } catch (error) {
+    // 如果标准解析失败，尝试 JSONC 格式
+    try {
+      // 移除单行注释 // ...
+      let jsonc = content.replace(/\/\/.*$/gm, '');
+
+      // 移除多行注释 /* ... */
+      jsonc = jsonc.replace(/\/\*[\s\S]*?\*\//g, '');
+
+      // 移除字符串外的尾随逗号
+      // 这个正则处理: "key": value,  或  ],  或  },
+      jsonc = jsonc.replace(/,\s*([}\]])/g, '$1');
+
+      // 解析 JSON
+      return JSON.parse(jsonc);
+    } catch (jsoncError) {
+      throw new Error(`JSONC 解析失败: ${jsoncError.message}`);
+    }
+  }
+}
+
+/**
+ * 将对象序列化为 JSONC 格式（带格式的 JSON）
+ * @param {object} obj - 要序列化的对象
+ * @returns {string} JSONC 格式的字符串
+ */
+function stringifyJSONC(obj) {
+  return JSON.stringify(obj, null, 2) + '\n';
+}
+
+/**
+ * 复制 schema.json 到配置目录
+ * @returns {boolean} 是否成功复制
+ */
+function copySchemaFile() {
+  try {
+    // 如果 schema.json 已存在，跳过
+    if (fs.existsSync(SCHEMA_PATH)) {
+      return true;
+    }
+
+    // 检查项目目录的 schema 是否存在
+    if (!fs.existsSync(PROJECT_SCHEMA_PATH)) {
+      // 如果项目目录不存在 schema.json，静默跳过
+      return false;
+    }
+
+    // 确保目标目录存在
+    if (!fs.existsSync(CONFIG_DIR)) {
+      fs.mkdirSync(CONFIG_DIR, { recursive: true });
+    }
+
+    // 复制文件
+    fs.copyFileSync(PROJECT_SCHEMA_PATH, SCHEMA_PATH);
+    console.log(colorize(`✅ Schema 文件已复制: ${SCHEMA_PATH}`, 'green'));
+    return true;
+  } catch (error) {
+    // 复制失败不影响主流程，仅输出调试信息
+    if (process.env.DEBUG) {
+      console.error(colorize(`Schema 复制失败: ${error.message}`, 'dim'));
+    }
+    return false;
+  }
+}
+
+/**
+ * 迁移旧的 JSON 配置文件到新的 JSONC 格式
+ * @param {string} oldPath - 旧配置文件路径
+ * @param {string} newPath - 新配置文件路径
+ * @returns {boolean} 是否成功迁移
+ */
+function migrateToJSONC(oldPath, newPath) {
+  try {
+    if (!fs.existsSync(oldPath)) return false;
+
+    console.log(colorize('📦 检测到旧配置文件，正在迁移到新位置...', 'yellow'));
+    console.log(colorize(`   旧位置: ${oldPath}`, 'dim'));
+
+    // 读取旧配置
+    const oldContent = fs.readFileSync(oldPath, 'utf-8');
+
+    // 尝试解析（支持旧 JSON 和新 JSONC）
+    let config;
+    try {
+      config = parseJSONC(oldContent);
+    } catch (error) {
+      throw new Error(`配置文件解析失败: ${error.message}`);
+    }
+
+    // 确保目标目录存在
+    const targetDir = path.dirname(newPath);
+    if (!fs.existsSync(targetDir)) {
+      fs.mkdirSync(targetDir, { recursive: true });
+    }
+
+    // 添加 $schema 字段（如果不存在），并确保它在第一行
+    if (!config.$schema) {
+      // 创建新对象，先放入 $schema，再放入其他属性
+      const configWithSchema = {
+        $schema: './schema.json'
+      };
+      // 合并原有配置
+      Object.assign(configWithSchema, config);
+      config = configWithSchema;
+    }
+
+    // 直接保存为 JSONC 格式（带缩进的标准 JSON）
+    // $schema 字段在第一行，方便编辑器识别
+    fs.writeFileSync(newPath, stringifyJSONC(config), 'utf-8');
+
+    console.log(colorize(`   新位置: ${newPath}`, 'dim'));
+    console.log(colorize('✅ 配置文件已迁移到 JSONC 格式', 'green'));
+
+    // 复制 schema.json 到配置目录（使 $schema 引用生效）
+    copySchemaFile();
+
+    return true;
+  } catch (error) {
+    console.error(colorize(`迁移失败: ${error.message}`, 'red'));
+    return false;
+  }
+}
 
 // 加载配置
 function loadConfig() {
   try {
+    // 确保配置目录存在
+    if (!fs.existsSync(CONFIG_DIR)) {
+      fs.mkdirSync(CONFIG_DIR, { recursive: true });
+    }
+
+    // 检查是否需要迁移旧配置文件到新的 JSONC 格式
+    // 情况1: 旧位置 (~/.git-user-log-config.json) -> 新位置 (~/.g2log/config.jsonc)
+    if (fs.existsSync(OLD_CONFIG_PATH) && !fs.existsSync(CONFIG_PATH)) {
+      migrateToJSONC(OLD_CONFIG_PATH, CONFIG_PATH);
+    }
+
+    // 情况2: 旧格式 JSON (~/.g2log/config.json) -> 新格式 JSONC (~/.g2log/config.jsonc)
+    const oldJsonConfigPath = path.join(CONFIG_DIR, 'config.json');
+    if (fs.existsSync(oldJsonConfigPath) && !fs.existsSync(CONFIG_PATH)) {
+      migrateToJSONC(oldJsonConfigPath, CONFIG_PATH);
+    }
+
+    // 确保 schema.json 存在于配置目录
+    if (!fs.existsSync(SCHEMA_PATH)) {
+      copySchemaFile();
+    }
+
     if (fs.existsSync(CONFIG_PATH)) {
       // 读取配置文件
       const fileContent = fs.readFileSync(CONFIG_PATH, 'utf-8');
-      
+
       try {
-        // 尝试解析JSON
-        const userConfig = JSON.parse(fileContent);
-        
-        // 检查并处理旧版字段
-        if (userConfig.deepseek_api_key && !userConfig.api_key) {
-          userConfig.api_key = userConfig.deepseek_api_key;
-          // 这里不删除旧字段，以保持兼容性，只在fixConfigFile中执行迁移
-        }
-        
-        // 检查prompt_template是否完整
-        if (userConfig.prompt_template && typeof userConfig.prompt_template === 'string') {
-          // 检查变量名是否被错误分割
-          if (userConfig.prompt_template.includes('{log_con') && 
-              !userConfig.prompt_template.includes('{log_content}')) {
-            console.log(colorize('警告: 配置文件中的prompt模板格式有误，已修复', 'yellow'));
-            userConfig.prompt_template = userConfig.prompt_template.replace('{log_con\ntent}', '{log_content}');
+        // 尝试解析 JSONC（支持注释）或 JSON
+        let userConfig = parseJSONC(fileContent);
+
+        // 检测是否是旧版配置（没有 profiles 字段）
+        if (!userConfig.profiles) {
+          console.log(colorize('检测到旧版配置，正在迁移到新结构...', 'yellow'));
+
+          // 创建新的 profiles 结构
+          const profiles = {
+            deepseek: {
+              api_key: '',
+              api_base_url: 'https://api.deepseek.com',
+              model: 'deepseek-chat',
+              temperature: 0.5,
+              max_tokens: 20480,
+              enable_thinking: false
+            },
+            openai: {
+              api_key: '',
+              api_base_url: 'https://api.openai.com',
+              model: 'gpt-4',
+              temperature: 0.5,
+              max_tokens: 2048,
+              enable_thinking: false
+            },
+            zhipu: {
+              api_key: '',
+              api_base_url: 'https://open.bigmodel.cn/api/paas/v4',
+              model: 'glm-4',
+              temperature: 0.7,
+              max_tokens: 2048,
+              enable_thinking: false
+            }
+          };
+
+          // 确定当前 profile
+          const provider = (userConfig.api_provider || 'deepseek').toLowerCase();
+          let currentProfile = 'deepseek';
+
+          // 根据旧配置填充 profile
+          if (provider === 'openai' || provider === 'zhipu' || provider === 'bigmodel') {
+            currentProfile = provider === 'bigmodel' ? 'zhipu' : provider;
           }
+
+          // 迁移配置到对应的 profile
+          if (currentProfile === 'openai') {
+            profiles.openai.api_key = userConfig.api_key || '';
+            profiles.openai.api_base_url = userConfig.api_base_url || 'https://api.openai.com';
+            profiles.openai.model = userConfig.model || 'gpt-4';
+          } else if (currentProfile === 'zhipu') {
+            profiles.zhipu.api_key = userConfig.api_key || '';
+            profiles.zhipu.api_base_url = userConfig.api_base_url || 'https://open.bigmodel.cn/api/paas/v4';
+            profiles.zhipu.model = userConfig.model || 'glm-4';
+            profiles.zhipu.enable_thinking = userConfig.enable_thinking || false;
+          } else {
+            profiles.deepseek.api_key = userConfig.api_key || userConfig.deepseek_api_key || '';
+            profiles.deepseek.api_base_url = userConfig.api_base_url || 'https://api.deepseek.com';
+            profiles.deepseek.model = userConfig.model || 'deepseek-chat';
+          }
+
+          // 构建新配置
+          userConfig = {
+            default_author: userConfig.default_author || '',
+            default_since: userConfig.default_since || 'today',
+            default_until: userConfig.default_until || 'today',
+            current_profile: currentProfile,
+            profiles: profiles,
+            repositories: userConfig.repositories || {},
+            prompt_template: userConfig.prompt_template || DEFAULT_CONFIG.prompt_template
+          };
+
+          // 自动保存迁移后的配置
+          saveConfig(userConfig);
+          console.log(colorize('✅ 配置已自动迁移到新结构', 'green'));
         }
-        
-        // 移除旧版推理模型相关配置
-        if (userConfig.use_reasoning !== undefined) {
-          delete userConfig.use_reasoning;
-        }
-        
-        if (userConfig.show_reasoning !== undefined) {
-          delete userConfig.show_reasoning;
-        }
-        
-        if (userConfig.reasoning_prompt_template) {
-          delete userConfig.reasoning_prompt_template;
-        }
-        
+
+        // 合并配置（优先使用用户配置）
         const mergedConfig = {
-          ...DEFAULT_CONFIG,  // 首先应用默认配置
-          ...userConfig       // 然后用用户配置覆盖默认值
+          ...DEFAULT_CONFIG,
+          ...userConfig,
+          profiles: {
+            ...DEFAULT_CONFIG.profiles,
+            ...userConfig.profiles
+          }
         };
-        
-        // 确保api_key字段存在，兼容旧版配置
-        if (!mergedConfig.api_key && userConfig.deepseek_api_key) {
-          mergedConfig.api_key = userConfig.deepseek_api_key;
-        }
-        
+
         return mergedConfig;
       } catch (parseError) {
         console.error(colorize(`解析配置文件失败: ${parseError.message}，将使用默认配置`, 'red'));
         return {...DEFAULT_CONFIG};
       }
     }
-    return {...DEFAULT_CONFIG}; // 如果配置文件不存在，返回默认配置的副本
+    return {...DEFAULT_CONFIG};
   } catch (error) {
     console.error(colorize(`加载配置失败: ${error.message}`, 'red'));
-    return {...DEFAULT_CONFIG}; // 如果出错，返回默认配置的副本
+    return {...DEFAULT_CONFIG};
   }
 }
 
 // 保存配置
 function saveConfig(config) {
   try {
-    fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), 'utf-8');
+    // 确保 $schema 字段存在且在第一行
+    if (!config.$schema) {
+      const configWithSchema = {
+        $schema: './schema.json'
+      };
+      Object.assign(configWithSchema, config);
+      config = configWithSchema;
+    }
+
+    fs.writeFileSync(CONFIG_PATH, stringifyJSONC(config), 'utf-8');
+
+    // 确保 schema.json 文件存在（使 $schema 引用生效）
+    copySchemaFile();
+
     return true;
   } catch (error) {
     console.error(colorize(`保存配置失败: ${error.message}`, 'red'));
@@ -181,24 +668,87 @@ function saveConfig(config) {
   }
 }
 
-// 设置API密钥
+// 获取当前激活的 profile
+function getCurrentProfile() {
+  const config = loadConfig();
+  const profileName = config.current_profile || 'deepseek';
+  return config.profiles[profileName] || config.profiles.deepseek;
+}
+
+// 设置当前 profile
+function setCurrentProfile(profileName) {
+  const config = loadConfig();
+  if (!config.profiles[profileName]) {
+    console.error(colorize(`错误: profile "${profileName}" 不存在`, 'red'));
+    return false;
+  }
+  config.current_profile = profileName;
+  return saveConfig(config);
+}
+
+// 列出所有 profiles
+function listProfiles() {
+  const config = loadConfig();
+  const current = config.current_profile || 'deepseek';
+  console.log(colorize('\n可用的 AI 配置 (Profiles):', 'cyan'));
+  console.log(colorize('='.repeat(50), 'dim'));
+
+  for (const [name, profile] of Object.entries(config.profiles)) {
+    const isCurrent = name === current;
+    const marker = isCurrent ? '→' : ' ';
+    const color = isCurrent ? 'green' : 'dim';
+
+    console.log(colorize(`${marker} [${name}] ${isCurrent ? '(当前)' : ''}`, color));
+    console.log(colorize(`  模型: ${profile.model}`, 'dim'));
+    console.log(colorize(`  API: ${profile.api_base_url}`, 'dim'));
+    console.log(colorize(`  温度: ${profile.temperature}`, 'dim'));
+    if (profile.enable_thinking) {
+      console.log(colorize(`  深度思考: 已启用`, 'cyan'));
+    }
+    console.log('');
+  }
+}
+
+// 更新当前 profile 的设置
+function updateProfileSetting(key, value) {
+  const config = loadConfig();
+  const profileName = config.current_profile || 'deepseek';
+  if (!config.profiles[profileName]) {
+    return false;
+  }
+  config.profiles[profileName][key] = value;
+  return saveConfig(config);
+}
+
+// 设置 API 密钥（更新当前 profile）
 function setApiKey(key) {
-  const config = loadConfig();
-  config.api_key = key;
-  return saveConfig(config);
+  return updateProfileSetting('api_key', key);
 }
 
-// 获取API密钥
+// 获取 API 密钥
 function getApiKey() {
-  const config = loadConfig();
-  return config.api_key;
+  const profile = getCurrentProfile();
+  return profile.api_key;
 }
 
-// 设置AI模型
+// 设置 AI 模型（更新当前 profile）
 function setAIModel(model) {
-  const config = loadConfig();
-  config.model = model;
-  return saveConfig(config);
+  return updateProfileSetting('model', model);
+}
+
+// 设置 API URL（更新当前 profile）
+function setAPIBaseURL(url) {
+  return updateProfileSetting('api_base_url', url);
+}
+
+// 设置温度（更新当前 profile）
+function setTemperature(temp) {
+  return updateProfileSetting('temperature', parseFloat(temp));
+}
+
+// 设置深度思考模式（更新当前 profile）
+function setThinkingMode(enabled) {
+  return updateProfileSetting('enable_thinking', enabled);
 }
 
 // 设置默认作者
@@ -591,8 +1141,10 @@ function showHelp() {
 
 显示设置:
   --no-color             禁用彩色输出
-  --save                 保存结果到文件
+  --save                 保存结果到文件（已弃用，使用--output）
   --output <file>        保存到指定文件
+  --html                 生成HTML页面并保存到当前目录
+  --open                 同 --html
   --debug                显示调试信息
   --show-prompt          显示完整的prompt内容
   --version              显示当前版本号
@@ -601,26 +1153,26 @@ function showHelp() {
   --find                 自动搜索并添加 Git 仓库到配置
   --config               启动交互式配置向导
   --set-api-key          设置API密钥
-  --set-api-provider     设置API提供商 (OpenAI/DeepSeek)
+  --set-api-provider     设置API提供商 (openai/deepseek/zhipu/bigmodel)
   --set-api-url          设置API基础URL
   --set-ai-model         设置AI模型
+  --enable-thinking      启用深度思考模式 (仅智谱AI支持)
+  --disable-thinking     禁用深度思考模式
   --set-default-author   设置默认作者 (可选)
   --add-repo <alias> --path <path>   添加仓库配置
   --remove-repo <alias>  移除仓库配置
   --list-repos           列出所有配置的仓库
-  --uninstall            删除g2log配置文件 (~/.git-user-log-config.json)
+  --uninstall            删除g2log配置目录 (~/.g2log/)
 
 示例:
-  g2log --find                                    # 自动搜索并添加仓库
-  g2log                                          # 获取所有作者的提交
-  g2log --author "张三"                          # 只获取张三的提交
-  g2log --since "2024-01-01" --until "2024-01-31"
-  g2log --days 30 --local
-  g2log --config
+  g2log                                          # 生成工作总结并保存到 ~/.g2log/（默认Markdown）
+  g2log --html                                   # 生成HTML页面并保存到 ~/.g2log/
+  g2log --output my-report.md                    # 保存到当前目录（自定义路径）
+  g2log --author "张三" --html                   # 生成张三的工作总结HTML
+  g2log --days 7                                # 最近7天的工作总结
   g2log --set-api-key "your-api-key"
-  g2log --add-repo "alias" --path "/path/to/repo"
-  g2log --list-repos
-  g2log --version
+  g2log --set-api-provider "zhipu"               # 使用智谱AI
+  g2log --enable-thinking                        # 启用深度思考模式
 `);
   process.exit(0);
 }
@@ -845,16 +1397,26 @@ function buildApiUrl(baseUrl, endpoint = 'chat/completions') {
   return `${baseUrl}/${endpoint}`;
 }
 
-// 使用AI进行总结 
+// 使用AI进行总结
 async function summarizeWithAI(gitLogs, author, since, until, spinner = null) {
   try {
     // 加载配置
     const config = loadConfig();
-    const modelName = config.ai_model || 'gpt-4-turbo';
-    const apiKey = config.api_key || '';
-    const apiProvider = config.api_provider || 'openai';
-    const apiBaseURL = config.api_base_url || '';
-    
+    const profile = getCurrentProfile();
+
+    const modelName = profile.model;
+    const apiKey = profile.api_key;
+    const apiBaseURL = profile.api_base_url;
+    const temperature = profile.temperature;
+    const maxTokens = profile.max_tokens;
+    const enableThinking = profile.enable_thinking;
+
+    // 根据 profile 名称确定提供商
+    const profileName = config.current_profile || 'deepseek';
+    let providerType = 'deepseek';
+    if (profileName === 'openai') providerType = 'openai';
+    else if (profileName === 'zhipu') providerType = 'zhipu';
+
     let prompt = config.prompt_template || `请根据以下Git提交记录，总结工作内容。
 按照类别进行归纳，突出重点任务和成就。
 用清晰的标题和小标题组织内容，确保总结全面且易于阅读。
@@ -865,7 +1427,7 @@ Git提交记录:
     // 替换变量 - 支持多种变量格式以兼容用户自定义模板
     const authorText = author || '所有作者';
     prompt = prompt.replace('{{GIT_LOGS}}', gitLogs)
-                  .replace('{log_content}', gitLogs)  // 添加对{log_content}格式的支持
+                  .replace('{log_content}', gitLogs)
                   .replace('{{AUTHOR}}', authorText)
                   .replace('{author}', authorText)
                   .replace('{{SINCE}}', since)
@@ -874,7 +1436,7 @@ Git提交记录:
                   .replace('{until}', until);
 
     if (spinner) spinner.update('🔄 正在连接API...');
-    
+
     // 打印完整提示内容（添加--debug参数时显示）
     if (process.argv.includes('--debug') || process.argv.includes('--show-prompt')) {
       console.log(colorize('\n📝 完整提示内容:', 'cyan'));
@@ -882,29 +1444,34 @@ Git提交记录:
       console.log(prompt);
       console.log(colorize('=' .repeat(50), 'dim'));
     }
-    
-    // 根据不同的API提供商使用不同的实现
-    let aiResponse = '';
-    const providerLower = apiProvider.toLowerCase();
-    
+
     // 输出AI总结的标题信息
     const summaryTitle = author ? `${author} 的工作总结` : '团队工作总结';
     console.log(`\n${colorize('📊 ' + summaryTitle, 'bright')}`);
     console.log(`${colorize('📅 时间范围: ' + since + ' 至 ' + until, 'green')}`);
-    console.log(`${colorize('🤖 使用模型: ' + modelName, 'cyan')}`);
+    console.log(`${colorize('🤖 AI配置: ' + profileName, 'cyan')}`);
+    console.log(`${colorize('🎯 模型: ' + modelName, 'cyan')}`);
+    if (enableThinking) {
+      console.log(`${colorize('🧠 深度思考: 已启用', 'cyan')}`);
+    }
     console.log(`${colorize('=' .repeat(30), 'bright')}\n`);
 
     // 根据提供商名称选择对应的实现
-    if (providerLower === 'openai') {
-      aiResponse = await getOpenAIResponse(apiKey, prompt, modelName, apiBaseURL, spinner);
+    let aiResponse = '';
+
+    if (providerType === 'openai') {
+      aiResponse = await getOpenAIResponse(apiKey, prompt, modelName, apiBaseURL, spinner, temperature, maxTokens);
+    } else if (providerType === 'zhipu') {
+      aiResponse = await getZhipuResponse(apiKey, prompt, modelName, apiBaseURL, spinner, temperature, maxTokens, enableThinking);
     } else {
       // 其他提供商默认使用DeepSeek实现
-      aiResponse = await getDeepSeekResponse(apiKey, prompt, modelName, apiBaseURL, spinner);
+      aiResponse = await getDeepSeekResponse(apiKey, prompt, modelName, apiBaseURL, spinner, temperature, maxTokens);
     }
 
     // 停止spinner并显示成功消息
     if (spinner) spinner.stop('✅ AI总结已生成');
-    
+
+    // 返回原始 AI 响应文本（不包含颜色代码）
     return aiResponse;
   } catch (error) {
     if (spinner) spinner.fail(`❌ AI总结失败: ${error.message}`);
@@ -913,19 +1480,19 @@ Git提交记录:
 }
 
 // 从OpenAI获取响应
-async function getOpenAIResponse(apiKey, prompt, modelName, apiBaseURL, spinner = null) {
+async function getOpenAIResponse(apiKey, prompt, modelName, apiBaseURL, spinner = null, temperature = null, maxTokens = null) {
   // 验证参数
   if (!apiKey) throw new Error('未设置OpenAI API密钥');
-  
+
   // 构造请求头和URL
   const headers = {
     'Content-Type': 'application/json',
     'Authorization': `Bearer ${apiKey}`
   };
-  
+
   const baseURL = apiBaseURL || 'https://api.openai.com';
-  const url = `${baseURL}/v1/chat/completions`;
-  
+  const url = `${baseURL}/chat/completions`;
+
   // 构造请求体
   const data = {
     model: modelName || 'gpt-4',
@@ -933,17 +1500,27 @@ async function getOpenAIResponse(apiKey, prompt, modelName, apiBaseURL, spinner 
       { role: 'system', content: '你是一位专业的工作总结助手，擅长将Git提交记录整理成清晰的工作报告。' },
       { role: 'user', content: prompt }
     ],
-    temperature: 0.5,
-    max_tokens: 2048,
     stream: true // 启用流式传输
   };
-  
+
+  // 只在参数存在时添加
+  if (temperature !== null && temperature !== undefined) {
+    data.temperature = temperature;
+  }
+  if (maxTokens !== null && maxTokens !== undefined) {
+    data.max_tokens = maxTokens;
+  }
+
   // 打印请求内容
   console.log(colorize('\n📨 发送给AI的请求:', 'cyan'));
   console.log(colorize(`📌 API端点: ${url}`, 'dim'));
   console.log(colorize(`🤖 使用模型: ${data.model}`, 'dim'));
-  console.log(colorize(`🌡️ 温度: ${data.temperature}`, 'dim'));
-  console.log(colorize(`🔢 最大Token: ${data.max_tokens}`, 'dim'));
+  if (data.temperature !== undefined) {
+    console.log(colorize(`🌡️ 温度: ${data.temperature}`, 'dim'));
+  }
+  if (data.max_tokens !== undefined) {
+    console.log(colorize(`🔢 最大Token: ${data.max_tokens}`, 'dim'));
+  }
   console.log(colorize('📄 系统角色: ' + data.messages[0].content, 'dim'));
   console.log(colorize('💬 提示内容预览: ' + data.messages[1].content.substring(0, 150) + '...', 'dim'));
   
@@ -1087,20 +1664,226 @@ async function getOpenAIResponse(apiKey, prompt, modelName, apiBaseURL, spinner 
   });
 }
 
-// 从DeepSeek获取响应
-async function getDeepSeekResponse(apiKey, prompt, modelName, apiBaseURL, spinner = null) {
+// 从智谱AI获取响应
+async function getZhipuResponse(apiKey, prompt, modelName, apiBaseURL, spinner = null, temperature = null, maxTokens = null, enableThinking = false) {
   // 验证参数
-  if (!apiKey) throw new Error('未设置DeepSeek API密钥');
-  
+  if (!apiKey) throw new Error('未设置智谱AI API密钥');
+  if (!apiBaseURL) throw new Error('未设置API基础URL，请使用 --set-api-url 配置');
+
   // 构造请求头和URL
   const headers = {
     'Content-Type': 'application/json',
     'Authorization': `Bearer ${apiKey}`
   };
-  
+
+  const url = `${apiBaseURL}/chat/completions`;
+
+  // 构造请求体
+  const data = {
+    model: modelName || 'glm-4',
+    messages: [
+      { role: 'system', content: '你是一位专业的工作总结助手，擅长将Git提交记录整理成清晰的工作报告。' },
+      { role: 'user', content: prompt }
+    ],
+    stream: true // 启用流式传输
+  };
+
+  // 只在参数存在时添加
+  if (temperature !== null && temperature !== undefined) {
+    data.temperature = temperature;
+  }
+  if (maxTokens !== null && maxTokens !== undefined) {
+    data.max_tokens = maxTokens;
+  }
+
+  // 如果启用深度思考模式，添加 thinking 参数
+  if (enableThinking) {
+    data.thinking = {
+      type: 'enabled'
+    };
+  }
+
+  // 打印请求内容
+  console.log(colorize('\n📨 发送给智谱AI的请求:', 'cyan'));
+  console.log(colorize(`📌 API端点: ${url}`, 'dim'));
+  console.log(colorize(`🤖 使用模型: ${data.model}`, 'dim'));
+  if (enableThinking) {
+    console.log(colorize(`🧠 深度思考模式: 已启用`, 'cyan'));
+  }
+  if (data.temperature !== undefined) {
+    console.log(colorize(`🌡️ 温度: ${data.temperature}`, 'dim'));
+  }
+  if (data.max_tokens !== undefined) {
+    console.log(colorize(`🔢 最大Token: ${data.max_tokens}`, 'dim'));
+  }
+  console.log(colorize('📄 系统角色: ' + data.messages[0].content, 'dim'));
+  console.log(colorize('💬 提示内容预览: ' + data.messages[1].content.substring(0, 150) + '...', 'dim'));
+
+  if (spinner) spinner.update('🔄 正在向智谱AI发送请求...\n');
+
+  return new Promise((resolve, reject) => {
+    try {
+      // 解析URL以获取主机名和路径
+      const urlObj = new URL(url);
+
+      // 准备请求选项
+      const options = {
+        hostname: urlObj.hostname,
+        path: urlObj.pathname,
+        method: 'POST',
+        headers: headers,
+        rejectUnauthorized: false
+      };
+
+      // 确定使用http还是https
+      const protocol = urlObj.protocol === 'https:' ? require('https') : require('http');
+
+      // 创建请求
+      const req = protocol.request(options, (res) => {
+        // 检查状态码
+        if (res.statusCode !== 200) {
+          let errorData = '';
+          res.on('data', chunk => {
+            errorData += chunk.toString();
+          });
+          res.on('end', () => {
+            let errorMessage = `智谱AI API请求失败 (${res.statusCode})`;
+            try {
+              const parsedError = JSON.parse(errorData);
+              errorMessage += `: ${JSON.stringify(parsedError)}`;
+            } catch (e) {
+              errorMessage += `: ${errorData}`;
+            }
+            if (spinner) spinner.fail(`❌ ${errorMessage}`);
+            reject(new Error(errorMessage));
+          });
+          return;
+        }
+
+        let fullContent = '';
+        let reasoningContent = '';
+        let buffer = '';
+        let isReasoningPhase = enableThinking; // 如果启用深度思考，先处理思考内容
+
+        // 处理数据
+        res.on('data', (chunk) => {
+          const data = chunk.toString();
+          buffer += data;
+
+          // 尝试从缓冲区中提取完整的SSE消息
+          const messages = buffer.split('\n\n');
+
+          // 处理除了最后一个可能不完整的消息之外的所有消息
+          for (let i = 0; i < messages.length - 1; i++) {
+            const message = messages[i].trim();
+            if (!message) continue;
+
+            if (message.startsWith('data: ')) {
+              const content = message.substring(6);
+              if (content === '[DONE]') continue;
+
+              try {
+                const parsed = JSON.parse(content);
+                if (parsed.choices && parsed.choices[0] && parsed.choices[0].delta) {
+                  const delta = parsed.choices[0].delta;
+
+                  // 处理深度思考内容（reasoning_content）
+                  if (delta.reasoning_content) {
+                    if (isReasoningPhase) {
+                      // 显示思考过程
+                      process.stdout.write(colorize(delta.reasoning_content, 'dim'));
+                      reasoningContent += delta.reasoning_content;
+                    }
+                  }
+
+                  // 处理主要内容（content）
+                  if (delta.content) {
+                    // 如果从思考阶段切换到内容阶段，输出分隔符
+                    if (isReasoningPhase && delta.content) {
+                      isReasoningPhase = false;
+                      console.log(colorize('\n\n--- 深度思考完成，开始生成总结 ---\n', 'cyan'));
+                    }
+                    process.stdout.write(delta.content);
+                    fullContent += delta.content;
+                  }
+                }
+              } catch (e) {
+                // 忽略解析错误
+              }
+            }
+          }
+
+          buffer = messages[messages.length - 1];
+        });
+
+        res.on('end', () => {
+          // 处理缓冲区中剩余的消息
+          if (buffer.trim()) {
+            const message = buffer.trim();
+            if (message.startsWith('data: ')) {
+              const content = message.substring(6);
+              if (content !== '[DONE]') {
+                try {
+                  const parsed = JSON.parse(content);
+                  if (parsed.choices && parsed.choices[0] && parsed.choices[0].delta) {
+                    const delta = parsed.choices[0].delta;
+                    if (delta.reasoning_content && isReasoningPhase) {
+                      process.stdout.write(colorize(delta.reasoning_content, 'dim'));
+                      reasoningContent += delta.reasoning_content;
+                    }
+                    if (delta.content) {
+                      if (isReasoningPhase) {
+                        isReasoningPhase = false;
+                        console.log(colorize('\n\n--- 深度思考完成，开始生成总结 ---\n', 'cyan'));
+                      }
+                      process.stdout.write(delta.content);
+                      fullContent += delta.content;
+                    }
+                  }
+                } catch (e) {
+                  // 忽略解析错误
+                }
+              }
+            }
+          }
+          console.log('\n');
+          resolve(fullContent);
+        });
+
+        res.on('error', (error) => {
+          if (spinner) spinner.fail(`❌ 智谱AI API响应错误: ${error.message}`);
+          reject(error);
+        });
+      });
+
+      req.on('error', (error) => {
+        if (spinner) spinner.fail(`❌ 智谱AI API请求错误: ${error.message}`);
+        reject(error);
+      });
+
+      req.write(JSON.stringify(data));
+      req.end();
+    } catch (error) {
+      if (spinner) spinner.fail(`❌ 智谱AI API错误: ${error.message}`);
+      reject(error);
+    }
+  });
+}
+
+// 从DeepSeek获取响应
+async function getDeepSeekResponse(apiKey, prompt, modelName, apiBaseURL, spinner = null, temperature = null, maxTokens = null) {
+  // 验证参数
+  if (!apiKey) throw new Error('未设置DeepSeek API密钥');
+
+  // 构造请求头和URL
+  const headers = {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${apiKey}`
+  };
+
   const baseURL = apiBaseURL || 'https://api.deepseek.com';
-  const url = `${baseURL}/v1/chat/completions`;
-  
+  const url = `${baseURL}/chat/completions`;
+
   // 构造请求体
   const data = {
     model: modelName || 'deepseek-chat',
@@ -1108,22 +1891,32 @@ async function getDeepSeekResponse(apiKey, prompt, modelName, apiBaseURL, spinne
       { role: 'system', content: '你是一位专业的工作总结助手，擅长将Git提交记录整理成清晰的工作报告。' },
       { role: 'user', content: prompt }
     ],
-    temperature: 0.5,
-    max_tokens: 20480,
     stream: true // 启用流式传输
   };
-  
+
+  // 只在参数存在时添加
+  if (temperature !== null && temperature !== undefined) {
+    data.temperature = temperature;
+  }
+  if (maxTokens !== null && maxTokens !== undefined) {
+    data.max_tokens = maxTokens;
+  }
+
   // 打印请求内容
   console.log(colorize('\n📨 发送给AI的请求:', 'cyan'));
   console.log(colorize(`📌 API提供商: ${apiBaseURL}`, 'dim'));
   console.log(colorize(`🤖 使用模型: ${data.model}`, 'dim'));
-  console.log(colorize(`🌡️ 温度: ${data.temperature}`, 'dim'));
-  console.log(colorize(`🔢 最大Token: ${data.max_tokens}`, 'dim'));
+  if (data.temperature !== undefined) {
+    console.log(colorize(`🌡️ 温度: ${data.temperature}`, 'dim'));
+  }
+  if (data.max_tokens !== undefined) {
+    console.log(colorize(`🔢 最大Token: ${data.max_tokens}`, 'dim'));
+  }
   console.log(colorize('📄 系统角色: ' + data.messages[0].content, 'dim'));
   console.log(colorize('💬 提示内容预览: ' + data.messages[1].content.substring(0, 150) + '...', 'dim'));
-  
+
   if (spinner) spinner.update('🔄 正在向AI发送请求...\n');
-  
+
   return new Promise((resolve, reject) => {
     try {
       // 解析URL以获取主机名和路径
@@ -1374,20 +2167,6 @@ function resetPromptTemplate() {
   }
   
   return result;
-}
-
-// 设置API提供商
-function setAPIProvider(provider) {
-  const config = loadConfig();
-  config.api_provider = provider;
-  return saveConfig(config);
-}
-
-// 设置API URL
-function setAPIBaseURL(url) {
-  const config = loadConfig();
-  config.api_base_url = url;
-  return saveConfig(config);
 }
 
 // 检测是否是通过npx临时运行并添加相应提示
@@ -1834,7 +2613,27 @@ async function getGitLogs() {
       }
       return;
     }
-    
+
+    if (args['enable-thinking']) {
+      const thinkingSpinner = spinner.start('🧠 正在启用深度思考模式...');
+      if (setThinkingMode(true)) {
+        thinkingSpinner.stop('✅ 深度思考模式已启用 (仅智谱AI支持)');
+      } else {
+        thinkingSpinner.fail('❌ 深度思考模式设置失败');
+      }
+      return;
+    }
+
+    if (args['disable-thinking']) {
+      const thinkingSpinner = spinner.start('🧠 正在禁用深度思考模式...');
+      if (setThinkingMode(false)) {
+        thinkingSpinner.stop('✅ 深度思考模式已禁用');
+      } else {
+        thinkingSpinner.fail('❌ 深度思考模式设置失败');
+      }
+      return;
+    }
+
     if (args['set-ai-model']) {
       const modelSpinner = spinner.start('🤖 正在设置AI模型...');
       if (setAIModel(args['set-ai-model'])) {
@@ -2045,15 +2844,58 @@ async function getGitLogs() {
         
         // 直接调用带spinner参数的summarizeWithAI函数
         const aiSummaryResult = await summarizeWithAI(result, author, since, until, summarySpinner);
-        
-        // 如果指定了输出文件，保存AI总结结果
-        if (outputFile) {
-          const fileSpinner = spinner.start(`💾 正在保存AI总结到文件: ${outputFile}`);
+
+        // 如果指定了 --html 或 --open，生成HTML并保存
+        if (args['html'] || args['open']) {
           const summaryTitle = author ? `${author} 的工作总结` : '团队工作总结';
-          fs.writeFileSync(outputFile, `# ${summaryTitle} (${since} 至 ${until})\n\n${aiSummaryResult}`, 'utf-8');
-          fileSpinner.stop(`✅ AI总结已保存到文件: ${outputFile}`);
+          generateHtmlAndSave(aiSummaryResult, summaryTitle, author, since, until);
+
+          // 在终端显示格式化的输出（带颜色）
+          console.log('\n');
+          console.log(formatMarkdown(aiSummaryResult));
           return;
         }
+
+        // 默认保存为markdown文件（以日期命名）
+        const summaryTitle = author ? `${author} 的工作总结` : '团队工作总结';
+        let defaultFileName;
+        let saveToConfigDir = false;
+
+        if (outputFile) {
+          // 如果用户指定了输出文件，使用用户指定的文件名
+          defaultFileName = outputFile;
+        } else {
+          // 生成详细的文件名：工作总结_{作者}_{起始日期}_to_{结束日期}.md
+          const authorName = author || '团队';
+
+          // 将日期格式化为 YYYY-MM-DD
+          const formatDate = (dateStr) => {
+            const date = new Date(dateStr);
+            if (isNaN(date.getTime())) return dateStr; // 如果无法解析，返回原字符串
+            return date.toISOString().split('T')[0];
+          };
+
+          const sinceDate = formatDate(since);
+          const untilDate = formatDate(until);
+
+          const filename = `工作总结_${authorName}_${sinceDate}_to_${untilDate}.md`;
+          defaultFileName = path.join(CONFIG_DIR, filename);
+          saveToConfigDir = true;
+        }
+
+        const fileSpinner = spinner.start(`💾 正在保存AI总结到文件: ${defaultFileName}`);
+        fs.writeFileSync(defaultFileName, `# ${summaryTitle} (${since} 至 ${until})\n\n${aiSummaryResult}`, 'utf-8');
+
+        if (saveToConfigDir) {
+          fileSpinner.stop(`✅ AI总结已保存到: ${defaultFileName}`);
+        } else {
+          fileSpinner.stop(`✅ AI总结已保存到文件: ${defaultFileName}`);
+        }
+
+        // 在终端显示格式化的输出（带颜色）
+        console.log('\n');
+        console.log(formatMarkdown(aiSummaryResult));
+        return;
       } catch (error) {
         console.error(colorize(`❌ AI总结失败: ${error.message}`, 'red'));
         // 如果AI总结失败，输出原始日志
@@ -2107,13 +2949,13 @@ function resetPromptTemplate() {
 // 删除配置文件
 function removeConfigFile() {
   try {
-    if (fs.existsSync(CONFIG_PATH)) {
-      fs.unlinkSync(CONFIG_PATH);
+    if (fs.existsSync(CONFIG_DIR)) {
+      fs.rmSync(CONFIG_DIR, { recursive: true, force: true });
       return true;
     }
-    return false; // 文件不存在
+    return false; // 目录不存在
   } catch (error) {
-    console.error(`❌ 删除配置文件失败: ${error.message}`);
+    console.error(`❌ 删除配置目录失败: ${error.message}`);
     return false;
   }
 }

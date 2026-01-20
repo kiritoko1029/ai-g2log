@@ -1,0 +1,128 @@
+{
+  // ============================================================================
+  // G2Log 配置文件
+  // ============================================================================
+  // 本文件使用 JSONC 格式（支持注释），如果需要验证配置结构，请参考
+  // 项目目录下的 schema.json 文件
+  //
+  // 配置说明：
+  // 1. default_author: 默认 Git 提交者名称，留空则查询所有作者
+  // 2. default_since/until: 默认时间范围，支持相对日期（如 "7 days ago"）和绝对日期
+  // 3. current_profile: 当前使用的 AI 配置档案名称（deepseek/openai/zhipu/moonshot）
+  // 4. profiles: AI 服务配置，每个档案包含 API 密钥、模型名称等参数
+  // 5. repositories: Git 仓库映射表，将别名映射到本地仓库绝对路径
+  // 6. prompt_template: AI 总结提示词模板
+  // ============================================================================
+
+  // 默认 Git 提交者名称
+  // 留空 "" 表示查询所有作者的提交
+  "default_author": "",
+
+  // 默认起始时间
+  // 支持格式：
+  //   - 相对日期: "7 days ago", "1 month ago", "today"
+  //   - 绝对日期: "2025-01-01"
+  "default_since": "7 days ago",
+
+  // 默认结束时间
+  // 通常设为 "today"
+  "default_until": "today",
+
+  // 当前使用的 AI 配置档案
+  // 可选值: "deepseek", "openai", "zhipu", "moonshot"
+  "current_profile": "zhipu",
+
+  // ============================================================================
+  // AI 服务配置档案
+  // ============================================================================
+  // 每个档案代表一个 AI 服务提供商的配置
+  //
+  // 通用参数说明：
+  // - api_key: API 密钥（必需）
+  // - api_base_url: API 基础 URL（必需）
+  // - model: 模型名称（必需）
+  // - temperature: 温度参数 0.0-2.0（可选，不同服务默认值不同）
+  // - max_tokens: 最大生成令牌数（可选）
+  // - enable_thinking: 是否启用深度思考模式（可选，仅部分模型支持）
+  // - stream: 是否使用流式输出（仅智谱支持）
+  //
+  // 注意：temperature 和 max_tokens 仅在明确配置时才会发送到 API
+  // ============================================================================
+
+  "profiles": {
+    // DeepSeek 配置
+    "deepseek": {
+      "api_key": "", // 在 https://platform.deepseek.com/api_keys 获取
+      "api_base_url": "https://api.deepseek.com",
+      "model": "deepseek-chat",
+      "temperature": 0.5, // 可选：0.0-2.0，数值越高输出越随机
+      "max_tokens": 20480, // 可选：最大生成令牌数
+      "enable_thinking": false // 深度思考模式
+    },
+
+    // OpenAI 配置
+    "openai": {
+      "api_key": "", // 在 https://platform.openai.com/api-keys 获取
+      "api_base_url": "https://api.openai.com/v1",
+      "model": "gpt-4",
+      "temperature": 0.5,
+      "max_tokens": 2048,
+      "enable_thinking": false
+    },
+
+    // 智谱 AI 配置
+    "zhipu": {
+      "api_key": "", // 在 https://open.bigmodel.cn/usercenter/apikeys 获取
+      "api_base_url": "https://open.bigmodel.cn/api/paas/v4",
+      "model": "glm-4.7", // 推荐模型: glm-4, glm-4.7
+      "stream": true, // 是否使用流式输出（推荐）
+      "enable_thinking": true // 启用深度思考模式（增强推理能力）
+      // temperature 和 max_tokens 为可选参数，通常不需要设置
+    },
+
+    // Moonshot (Kimi) 配置
+    "moonshot": {
+      "api_key": "", // 在 https://platform.moonshot.cn/console/api-keys 获取
+      "api_base_url": "https://api.moonshot.cn/v1",
+      "model": "kimi-k2-turbo-preview",
+      "temperature": 0.7,
+      "max_tokens": 2048,
+      "enable_thinking": false
+    }
+  },
+
+  // ============================================================================
+  // Git 仓库映射表
+  // ============================================================================
+  // 格式: "仓库别名": "本地仓库绝对路径"
+  //
+  // 添加仓库的方法：
+  // 1. 使用命令: g2log --add-repo="别名" --path="/path/to/repo"
+  // 2. 手动编辑: 按照下方格式添加
+  //
+  // 查看所有仓库: g2log --list-repos
+  // 删除仓库: g2log --remove-repo="别名"
+  // ============================================================================
+
+  "repositories": {
+    // 示例仓库（请根据实际情况修改）
+    // "my-project": "/Users/yourname/projects/my-project",
+    // "work-repo": "/Users/yourname/work/workspace"
+
+    // 你可以使用 g2log --add-repo 命令自动添加仓库
+  },
+
+  // ============================================================================
+  // AI 总结提示词模板
+  // ============================================================================
+  // 支持的变量：
+  // - {log_content}: Git 提交记录内容
+  // - {author}: 作者名称
+  // - {since}: 起始日期
+  // - {until}: 结束日期
+  //
+  // 也可以使用双大括号格式：{{log_content}}, {{author}}, {{since}}, {{until}}
+  // ============================================================================
+
+  "prompt_template": "请根据下面的Git提交记录生成工作总结。请根据实际提交的内容量和重要性灵活调整总结的详细程度。\n\n以下是Git提交记录:\n\n{log_content}\n\n要求：\n1. 按日期和项目组织内容\n2. 根据提交量自适应调整总结详细程度：\n   - 提交较少时：简明扼要，突出关键成果\n   - 提交较多时：详细列出各项工作，确保重要内容不遗漏\n   - 重要功能开发、重大bug修复应详细说明\n3. 使用清晰、专业但不晦涩的语言\n4. 突出重要的功能开发、问题修复和优化改进\n5. 适合放入工作日报，便于团队了解工作进展和复制\n6. 严格按照以下输出格式（每个项目一行，项目和内容在同一行）：\n   【日期】：YYYY-MM-DD\n   项目名称1: 工作内容描述\n   项目名称2: 工作内容描述\n   项目名称3: 工作内容描述\n   \n   【日期】：YYYY-MM-DD\n   项目名称1: 工作内容描述\n   项目名称2: 工作内容描述\n7. 不同日期之间空一行分隔\n8. 同一天的不同项目直接换行，不空行\n9. 回复不要出现多余的内容，不要使用markdown格式，不要使用列表符号"
+}

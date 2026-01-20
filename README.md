@@ -97,24 +97,59 @@ npx g2log [--since="2023-01-01"] [--until="2023-12-31"] [选项]
 
 ### 配置文件
 
-配置文件保存在用户主目录下的 `.git-user-log-config.json`，包含以下内容：
+配置文件使用 **JSONC 格式**（支持注释），保存在 `~/.g2log/config.jsonc`。
 
-```json
+**配置文件位置：**
+- 配置文件: `~/.g2log/config.jsonc`（JSONC 格式，支持注释）
+- Schema 文件: `~/.g2log/schema.json`（自动复制，用于 VS Code 智能提示）
+- 旧配置: `~/.git-user-log-config.json`（自动迁移到新位置）
+
+**配置文件结构：**
+
+```jsonc
 {
-  "api_key": "your-api-key-here",
+  "$schema": "./schema.json",  // 引用 schema，VS Code 会自动提供智能提示
+  // 默认 Git 提交者名称
   "default_author": "张三",
+
+  // 默认时间范围
   "default_since": "7 days ago",
   "default_until": "today",
-  "model": "deepseek-chat",
-  "api_base_url": "https://api.deepseek.com",
-  "api_provider": "deepseek",
+
+  // 当前使用的 AI 配置档案
+  "current_profile": "zhipu",
+
+  // AI 服务配置档案
+  "profiles": {
+    "deepseek": {
+      "api_key": "your-api-key",
+      "api_base_url": "https://api.deepseek.com",
+      "model": "deepseek-chat"
+    },
+    "zhipu": {
+      "api_key": "your-api-key",
+      "api_base_url": "https://open.bigmodel.cn/api/paas/v4",
+      "model": "glm-4.7",
+      "stream": true,
+      "enable_thinking": true
+    }
+  },
+
+  // Git 仓库映射表
   "repositories": {
     "前端": "/path/to/frontend-project",
     "后端": "/path/to/backend-project"
   },
-  "prompt_template": "请根据下面的Git提交记录，用3-5句话简洁地总结一天的工作内容。\n\n以下是Git提交记录:\n\n{{GIT_LOGS}}\n\n要求：\n1. 按项目和日期组织内容\n2. 每个项目每天的工作内容用3-5句话概括\n3. 使用清晰、专业但不晦涩的语言\n4. 突出重要的功能开发、问题修复和优化改进\n5. 适合放入工作日报的简洁描述\n6. 输出格式为：【日期】：\n                  【项目名称】- 【工作内容概述】\n                  【项目名称】- 【工作内容概述】\n7. 回复不要出现多余的内容，非必要不要用markdown格式"
+
+  // AI 提示词模板
+  "prompt_template": "请根据下面的Git提交记录..."
 }
 ```
+
+**注意：**
+- `temperature` 和 `max_tokens` 参数为可选，仅在明确配置时才会发送到 API
+- 旧版配置会自动迁移到新的 JSONC 格式
+- 可以在配置文件中添加注释以方便说明
 
 ## 配置优先级
 

@@ -1,0 +1,145 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "G2Log Configuration Schema",
+  "description": "配置文件结构定义 - g2log (AI-Git用户日报生成工具)",
+  "type": "object",
+  "properties": {
+    "default_author": {
+      "type": "string",
+      "description": "默认作者名称（Git提交者）",
+      "default": ""
+    },
+    "default_since": {
+      "type": "string",
+      "description": "默认起始时间（如：'7 days ago', '2025-01-01'）",
+      "default": "7 days ago"
+    },
+    "default_until": {
+      "type": "string",
+      "description": "默认结束时间（如：'today', '2025-01-20'）",
+      "default": "today"
+    },
+    "current_profile": {
+      "type": "string",
+      "description": "当前使用的 AI 配置档案名称",
+      "default": "zhipu",
+      "enum": ["deepseek", "openai", "zhipu", "moonshot"]
+    },
+    "profiles": {
+      "type": "object",
+      "description": "AI 服务配置档案",
+      "propertyNames": {
+        "type": "string",
+        "enum": ["deepseek", "openai", "zhipu", "moonshot"]
+      },
+      "properties": {
+        "deepseek": {
+          "$ref": "#/definitions/profile"
+        },
+        "openai": {
+          "$ref": "#/definitions/profile"
+        },
+        "zhipu": {
+          "$ref": "#/definitions/zhipuProfile"
+        },
+        "moonshot": {
+          "$ref": "#/definitions/profile"
+        }
+      },
+      "additionalProperties": false
+    },
+    "repositories": {
+      "type": "object",
+      "description": "Git 仓库映射表（别名 -> 仓库路径）",
+      "additionalProperties": {
+        "type": "string",
+        "description": "仓库本地绝对路径"
+      }
+    },
+    "prompt_template": {
+      "type": "string",
+      "description": "AI 总结提示词模板，支持变量：{log_content}, {author}, {since}, {until}",
+      "default": "请根据下面的Git提交记录生成工作总结..."
+    }
+  },
+  "definitions": {
+    "profile": {
+      "type": "object",
+      "description": "通用 AI 服务配置",
+      "properties": {
+        "api_key": {
+          "type": "string",
+          "description": "API 密钥"
+        },
+        "api_base_url": {
+          "type": "string",
+          "description": "API 基础 URL",
+          "format": "uri"
+        },
+        "model": {
+          "type": "string",
+          "description": "模型名称"
+        },
+        "temperature": {
+          "type": "number",
+          "description": "温度参数（0.0-2.0）",
+          "minimum": 0,
+          "maximum": 2
+        },
+        "max_tokens": {
+          "type": "integer",
+          "description": "最大生成令牌数",
+          "minimum": 1
+        },
+        "enable_thinking": {
+          "type": "boolean",
+          "description": "是否启用深度思考模式（仅部分模型支持）",
+          "default": false
+        }
+      },
+      "required": ["api_key", "api_base_url", "model"]
+    },
+    "zhipuProfile": {
+      "type": "object",
+      "description": "智谱 AI 配置",
+      "properties": {
+        "api_key": {
+          "type": "string",
+          "description": "API 密钥"
+        },
+        "api_base_url": {
+          "type": "string",
+          "description": "API 基础 URL",
+          "format": "uri"
+        },
+        "model": {
+          "type": "string",
+          "description": "模型名称（如：glm-4, glm-4.7）"
+        },
+        "stream": {
+          "type": "boolean",
+          "description": "是否使用流式输出",
+          "default": true
+        },
+        "enable_thinking": {
+          "type": "boolean",
+          "description": "是否启用深度思考模式",
+          "default": false
+        },
+        "temperature": {
+          "type": "number",
+          "description": "温度参数（可选）",
+          "minimum": 0,
+          "maximum": 2
+        },
+        "max_tokens": {
+          "type": "integer",
+          "description": "最大令牌数（可选）",
+          "minimum": 1
+        }
+      },
+      "required": ["api_key", "api_base_url", "model"]
+    }
+  },
+  "required": ["current_profile", "profiles"]
+}
