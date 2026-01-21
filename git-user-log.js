@@ -233,10 +233,14 @@ function generateHtmlAndSave(content, title = 'Git工作总结', author = '', si
   // 生成详细的文件名：工作总结_{作者}_{起始日期}_to_{结束日期}.html
   const authorName = author || '团队';
 
-  // 将日期格式化为 YYYY-MM-DD
+  // 使用当前日期处理相对日期
+  const today = new Date();
   const formatDate = (dateStr) => {
     const date = new Date(dateStr);
-    if (isNaN(date.getTime())) return dateStr;
+    if (isNaN(date.getTime())) {
+      // 相对日期，使用当前日期
+      return today.toISOString().split('T')[0];
+    }
     return date.toISOString().split('T')[0];
   };
 
@@ -251,7 +255,7 @@ function generateHtmlAndSave(content, title = 'Git工作总结', author = '', si
   fs.writeFileSync(filepath, html, 'utf-8');
 
   console.log(colorize(`\n✅ HTML文件已保存: ${filepath}`, 'green'));
-  console.log(colorize(`💡 提示: 可以在浏览器中打开查看`, 'dim'));
+
   return filepath;
 }
 
@@ -1469,7 +1473,9 @@ Git提交记录:
     }
 
     // 停止spinner并显示成功消息
-    if (spinner) spinner.stop('✅ AI总结已生成');
+    if (spinner) {
+      spinner.stop('✅ AI总结已生成');
+    }
 
     // 返回原始 AI 响应文本（不包含颜色代码）
     return aiResponse;
@@ -2769,16 +2775,80 @@ async function getGitLogs() {
         // 生成AI总结
         try {
           const summarySpinner = spinner.start('🧠 正在总结所有仓库的提交记录...');
-          
+
           // 直接调用带spinner参数的summarizeWithAI函数
           const aiResult = await summarizeWithAI(multiRepoLogs, author, since, until, summarySpinner);
-          
-          // 如果指定了输出文件，保存AI总结结果
-          if (outputFile) {
-            const fileSpinner = spinner.start(`💾 正在保存多仓库AI总结到文件: ${outputFile}`);
-            fs.writeFileSync(outputFile, `# 📊 ${author} 的多仓库工作总结 (${since} 至 ${until})\n\n${aiResult}`, 'utf-8');
-            fileSpinner.stop(`✅ 多仓库AI总结已保存到文件: ${outputFile}`);
+
+          // 如果指定了 --html 或 --open，生成HTML并保存
+          if (args['html'] || args['open']) {
+            const summaryTitle = author ? `${author} 的工作总结` : '团队工作总结';
+            const filepath = generateHtmlAndSave(aiResult, summaryTitle, author, since, until);
+
+            // 在浏览器中打开HTML文件
+            const { execSync } = require('child_process');
+            const platform = process.platform;
+            let command;
+
+            if (platform === 'darwin') {
+              command = `open '${filepath}'`;
+            } else if (platform === 'win32') {
+              command = `start '' '${filepath}'`;
+            } else {
+              command = `xdg-open '${filepath}'`;
+            }
+
+            console.log(colorize(`🌐 正在在浏览器中打开...`, 'cyan'));
+
+            try {
+              execSync(command, { stdio: 'ignore' });
+              console.log(colorize('✅ 已在浏览器中打开', 'green'));
+            } catch (error) {
+              console.log(colorize(`⚠️  无法自动打开浏览器,请手动打开: ${filepath}`, 'yellow'));
+            }
+
+            // 在终端显示格式化的输出（带颜色）
+            console.log('\n');
+            console.log(formatMarkdown(aiResult));
+            return;
           }
+
+          // 默认保存为markdown文件（以日期命名）
+          const summaryTitle = author ? `${author} 的工作总结` : '团队工作总结';
+          let defaultFileName;
+
+          if (outputFile) {
+            // 如果用户指定了输出文件，使用用户指定的文件名
+            defaultFileName = outputFile;
+          } else {
+            // 生成详细的文件名：工作总结_{作者}_{起始日期}_to_{结束日期}.md
+            const authorName = author || '团队';
+
+            // 使用当前日期作为文件名（使用绝对日期）
+            const today = new Date();
+            const formatDate = (dateStr) => {
+              // 尝试解析日期
+              const date = new Date(dateStr);
+              if (isNaN(date.getTime())) {
+                // 如果是相对日期（如 "7 days ago", "today"），使用当前日期
+                return today.toISOString().split('T')[0];
+              }
+              return date.toISOString().split('T')[0];
+            };
+
+            const sinceDate = formatDate(since);
+            const untilDate = formatDate(until);
+
+            const filename = `工作总结_${authorName}_${sinceDate}_to_${untilDate}.md`;
+            defaultFileName = path.join(CONFIG_DIR, filename);
+          }
+
+          const fileSpinner = spinner.start(`💾 正在保存AI总结到文件: ${defaultFileName}`);
+          fs.writeFileSync(defaultFileName, `# ${summaryTitle} (${since} 至 ${until})\n\n${aiResult}`, 'utf-8');
+          fileSpinner.stop(`✅ AI总结已保存到: ${defaultFileName}`);
+
+          // 在终端显示格式化的输出（带颜色）
+          console.log('\n');
+          console.log(formatMarkdown(aiResult));
           return;
         } catch (error) {
           console.error(colorize(`❌ AI总结失败: ${error.message}`, 'red'));
@@ -2841,9 +2911,16 @@ async function getGitLogs() {
       // 生成AI总结
       try {
         const summarySpinner = spinner.start('🧠 正在总结提交记录...');
-        
+
         // 直接调用带spinner参数的summarizeWithAI函数
         const aiSummaryResult = await summarizeWithAI(result, author, since, until, summarySpinner);
+
+        if (process.argv.includes('--debug')) {
+          console.log(colorize(`📝 AI响应长度: ${aiSummaryResult.length} 字符`, 'cyan'));
+          console.log(colorize(`🔍 args['html']: ${args['html']}`, 'cyan'));
+          console.log(colorize(`🔍 args['open']: ${args['open']}`, 'cyan'));
+          console.log(colorize(`🔍 outputFile: ${outputFile}`, 'cyan'));
+        }
 
         // 如果指定了 --html 或 --open，生成HTML并保存
         if (args['html'] || args['open']) {
@@ -2861,6 +2938,10 @@ async function getGitLogs() {
         let defaultFileName;
         let saveToConfigDir = false;
 
+        if (process.argv.includes('--debug')) {
+          console.log(colorize(`\n💡 准备保存文件...`, 'cyan'));
+        }
+
         if (outputFile) {
           // 如果用户指定了输出文件，使用用户指定的文件名
           defaultFileName = outputFile;
@@ -2868,15 +2949,42 @@ async function getGitLogs() {
           // 生成详细的文件名：工作总结_{作者}_{起始日期}_to_{结束日期}.md
           const authorName = author || '团队';
 
-          // 将日期格式化为 YYYY-MM-DD
+          // 使用当前日期作为文件名（使用绝对日期）
+          const today = new Date();
           const formatDate = (dateStr) => {
+            // 尝试解析日期
             const date = new Date(dateStr);
-            if (isNaN(date.getTime())) return dateStr; // 如果无法解析，返回原字符串
+            if (isNaN(date.getTime())) {
+              // 如果是相对日期（如 "7 days ago", "today"），使用当前日期
+              return today.toISOString().split('T')[0];
+            }
             return date.toISOString().split('T')[0];
           };
 
-          const sinceDate = formatDate(since);
-          const untilDate = formatDate(until);
+          // 如果是相对日期，计算实际的起止日期
+          let sinceDate, untilDate;
+          try {
+            // 对于 "7 days ago" 这样的相对日期，使用 git 命令获取实际日期
+            if (since.includes('ago') || since.includes('day')) {
+              const gitDate = require('child_process').execSync(
+                `git log --since="${since}" --until="${since}" --format="%ad" --date=format:"%Y-%m-%d" -1`,
+                { encoding: 'utf-8', cwd: repoPath }
+              ).trim();
+              sinceDate = gitDate || today.toISOString().split('T')[0];
+            } else {
+              sinceDate = formatDate(since);
+            }
+
+            if (until.includes('ago') || until.includes('day') || until === 'today') {
+              untilDate = today.toISOString().split('T')[0];
+            } else {
+              untilDate = formatDate(until);
+            }
+          } catch (error) {
+            // 如果 git 命令失败，使用当前日期
+            sinceDate = today.toISOString().split('T')[0];
+            untilDate = today.toISOString().split('T')[0];
+          }
 
           const filename = `工作总结_${authorName}_${sinceDate}_to_${untilDate}.md`;
           defaultFileName = path.join(CONFIG_DIR, filename);
@@ -2922,7 +3030,13 @@ async function getGitLogs() {
 }
 
 // 执行主函数
-getGitLogs();
+getGitLogs().then(() => {
+  console.log('✅✅✅ getGitLogs 完成 ✅✅✅');
+}).catch((error) => {
+  console.error('❌ getGitLogs 失败:', error);
+});
+
+console.log('🚀 程序已启动');
 
 // 如果直接调用setupConfigInteractive进行测试（需要注释掉主函数调用）
 // setupConfigInteractive(['api_key', 'default_author', 'repositories'])
