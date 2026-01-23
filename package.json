@@ -1,6 +1,6 @@
 {
   "name": "g2log",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "description": "查询Git提交记录并通过AI进行总结，支持多作者、多仓库，可通过npx直接运行",
   "main": "git-user-log.js",
   "bin": {

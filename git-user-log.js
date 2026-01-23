@@ -132,8 +132,67 @@ function formatMarkdown(text) {
   return result.join('');
 }
 
+function formatChangeStatsText(stats) {
+  if (!stats) return '';
+  const added = Number(stats.added) || 0;
+  const deleted = Number(stats.deleted) || 0;
+  const changed = added + deleted;
+  const note = stats.failed ? '（部分统计失败）' : '';
+  return [
+    `变更统计${note}:`,
+    `- 修改行数: ${changed}`,
+    `- 新增行数: ${added}`,
+    `- 删除行数: ${deleted}`
+  ].join('\n');
+}
+
+function buildStatsHtml(stats) {
+  if (!stats) return '';
+  const added = Number(stats.added) || 0;
+  const deleted = Number(stats.deleted) || 0;
+  const changed = added + deleted;
+  const note = stats.failed ? '<span class="stats-note">部分统计失败</span>' : '';
+
+  return `
+    <section class="stats">
+      <div class="stats-header">
+        <span>📊 变更统计</span>
+        ${note}
+      </div>
+      <div class="stats-grid">
+        <div class="stat-card stat-changed">
+          <div class="stat-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+          </div>
+          <div class="stat-content">
+            <div class="stat-value">${changed.toLocaleString()}</div>
+            <div class="stat-label">修改行数</div>
+          </div>
+        </div>
+        <div class="stat-card stat-added">
+           <div class="stat-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+          </div>
+          <div class="stat-content">
+            <div class="stat-value">${added.toLocaleString()}</div>
+            <div class="stat-label">新增行数</div>
+          </div>
+        </div>
+        <div class="stat-card stat-deleted">
+           <div class="stat-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/></svg>
+          </div>
+          <div class="stat-content">
+            <div class="stat-value">${deleted.toLocaleString()}</div>
+            <div class="stat-label">删除行数</div>
+          </div>
+        </div>
+      </div>
+    </section>`;
+}
+
 // 将文本转换为HTML格式
-function textToHtml(text, title = 'Git工作总结') {
+function textToHtml(text, title = 'Git工作总结', stats = null) {
   const date = new Date().toLocaleString('zh-CN');
 
   // 处理文本格式
@@ -142,13 +201,21 @@ function textToHtml(text, title = 'Git工作总结') {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    // 处理标题
-    .replace(/^【(.*?)】/gm, '<h3>$1</h3>')
-    // 处理列表项
-    .replace(/^[\s]*[-•]\s+(.*)$/gm, '<li>$1</li>')
-    // 处理段落
-    .replace(/\n\n/g, '</p><p>')
+    // 优化标题样式：【项目名】: 描述 -> 标题组件
+    .replace(/^【(.*?)】\s*[:：]\s*(.*)$/gm, (match, label, rest) => {
+      const trimmed = rest ? rest.trim() : '';
+      return `<h3 class="project-title"><span class="project-name">${label}</span>${trimmed ? `<span class="project-tag">${trimmed}</span>` : ''}</h3>`;
+    })
+    // 仅有【项目名】的情况
+    .replace(/^【(.*?)】/gm, '<h3 class="project-title"><span class="project-name">$1</span></h3>')
+    // 优化列表项，使用 div 模拟以避免 <ul> 嵌套复杂性
+    .replace(/^[\s]*[-•]\s+(.*)$/gm, '<div class="list-item"><div class="list-bullet">•</div><div class="list-content">$1</div></div>')
+    // 处理段落间距
+    .replace(/\n\n/g, '<div class="paragraph-spacing"></div>')
+    // 处理换行
     .replace(/\n/g, '<br>');
+  
+  const statsHtml = buildStatsHtml(stats);
 
   return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -157,68 +224,283 @@ function textToHtml(text, title = 'Git工作总结') {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${title}</title>
   <style>
+    :root {
+      --primary: #2563eb;
+      --primary-light: #eff6ff;
+      --primary-dark: #1e40af;
+      --text-main: #1f2937;
+      --text-secondary: #4b5563;
+      --text-muted: #9ca3af;
+      --bg-body: #f3f4f6;
+      --bg-card: #ffffff;
+      --border: #e5e7eb;
+      --border-hover: #d1d5db;
+      --success: #059669;
+      --success-bg: #ecfdf5;
+      --danger: #dc2626;
+      --danger-bg: #fef2f2;
+      --warning: #d97706;
+      --warning-bg: #fffbeb;
+      --info: #2563eb;
+      --info-bg: #eff6ff;
+      --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+      --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+      --radius: 12px;
+      --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --text-main: #f9fafb;
+        --text-secondary: #d1d5db;
+        --text-muted: #9ca3af;
+        --bg-body: #111827;
+        --bg-card: #1f2937;
+        --border: #374151;
+        --border-hover: #4b5563;
+        --primary-light: #1e3a8a;
+        --success-bg: #064e3b;
+        --danger-bg: #7f1d1d;
+        --warning-bg: #78350f;
+        --info-bg: #1e3a8a;
+      }
+    }
+
     * { margin: 0; padding: 0; box-sizing: border-box; }
+    
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      font-family: var(--font-sans);
       line-height: 1.6;
-      color: #333;
-      background: #f5f5f5;
-      padding: 20px;
+      color: var(--text-main);
+      background-color: var(--bg-body);
+      padding: 40px 20px;
+      -webkit-font-smoothing: antialiased;
     }
+
     .container {
-      max-width: 900px;
+      max-width: 800px;
       margin: 0 auto;
-      background: white;
-      padding: 40px;
-      border-radius: 8px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      background: var(--bg-card);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      border: 1px solid var(--border);
     }
+
+    /* Header */
+    .header {
+      padding: 32px 40px;
+      border-bottom: 1px solid var(--border);
+      background: linear-gradient(to right, var(--bg-card), var(--primary-light));
+    }
+    
     h1 {
-      color: #2c3e50;
-      margin-bottom: 10px;
       font-size: 28px;
+      font-weight: 700;
+      color: var(--text-main);
+      margin-bottom: 12px;
+      letter-spacing: -0.5px;
     }
+    
     .meta {
-      color: #7f8c8d;
+      display: inline-flex;
+      align-items: center;
+      font-size: 13px;
+      color: var(--text-secondary);
+      background-color: var(--bg-card);
+      padding: 6px 12px;
+      border-radius: 20px;
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow-sm);
+    }
+
+    /* Stats Section */
+    .stats {
+      padding: 24px 40px;
+      background-color: var(--bg-card);
+      border-bottom: 1px solid var(--border);
+    }
+    
+    .stats-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
       font-size: 14px;
-      margin-bottom: 30px;
-      padding-bottom: 20px;
-      border-bottom: 1px solid #eee;
+      font-weight: 600;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
     }
-    h3 {
-      color: #3498db;
-      margin-top: 25px;
-      margin-bottom: 15px;
-      font-size: 18px;
-      padding-left: 10px;
-      border-left: 4px solid #3498db;
-    }
-    p {
-      margin-bottom: 15px;
-      line-height: 1.8;
-    }
-    li {
-      margin-bottom: 8px;
-      margin-left: 20px;
-      line-height: 1.6;
-    }
-    .footer {
-      margin-top: 40px;
-      padding-top: 20px;
-      border-top: 1px solid #eee;
-      color: #95a5a6;
+
+    .stats-note {
       font-size: 12px;
+      color: var(--warning);
+      background: var(--warning-bg);
+      padding: 2px 8px;
+      border-radius: 99px;
+    }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+    }
+
+    .stat-card {
+      padding: 16px;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      transition: all 0.2s ease;
+    }
+
+    .stat-card:hover {
+      border-color: var(--border-hover);
+      transform: translateY(-1px);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .stat-icon {
+      width: 40px;
+      height: 40px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .stat-changed .stat-icon { background: var(--info-bg); color: var(--info); }
+    .stat-added .stat-icon { background: var(--success-bg); color: var(--success); }
+    .stat-deleted .stat-icon { background: var(--danger-bg); color: var(--danger); }
+
+    .stat-value {
+      font-size: 20px;
+      font-weight: 700;
+      line-height: 1.2;
+    }
+
+    .stat-label {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    /* Content Section */
+    .content {
+      padding: 32px 40px;
+    }
+
+    .project-title {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin: 32px 0 16px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+    
+    .project-title:first-child { margin-top: 0; }
+
+    .project-name {
+      font-size: 18px;
+      font-weight: 600;
+      color: var(--text-main);
+      position: relative;
+      padding-left: 16px;
+    }
+
+    .project-name::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 6px;
+      height: 6px;
+      background-color: var(--primary);
+      border-radius: 50%;
+    }
+
+    .project-tag {
+      font-size: 12px;
+      font-weight: 500;
+      padding: 2px 8px;
+      border-radius: 6px;
+      background-color: var(--primary-light);
+      color: var(--primary);
+      border: 1px solid rgba(37, 99, 235, 0.1);
+    }
+
+    .list-item {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 8px;
+      padding: 4px 8px;
+      border-radius: 6px;
+    }
+    
+    .list-item:hover {
+      background-color: rgba(0,0,0,0.02);
+    }
+
+    .list-bullet {
+      color: var(--primary);
+      font-weight: bold;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+
+    .list-content {
+      color: var(--text-secondary);
+      font-size: 15px;
+    }
+
+    .paragraph-spacing {
+      height: 16px;
+    }
+
+    /* Footer */
+    .footer {
+      padding: 24px;
       text-align: center;
+      font-size: 12px;
+      color: var(--text-muted);
+      border-top: 1px solid var(--border);
+      background-color: var(--bg-body); /* Slightly distinct from card */
+    }
+
+    @media (max-width: 640px) {
+      body { padding: 16px; }
+      .header, .stats, .content { padding: 24px 20px; }
+      .stats-grid { grid-template-columns: 1fr; }
+      .project-title { flex-direction: column; align-items: flex-start; gap: 8px; }
+      .project-name::before { top: 12px; }
     }
   </style>
 </head>
 <body>
   <div class="container">
-    <h1>📊 ${title}</h1>
-    <div class="meta">生成时间: ${date}</div>
-    <p>${html}</p>
+    <div class="header">
+      <h1>📊 ${title}</h1>
+      <div class="meta">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        生成时间: ${date}
+      </div>
+    </div>
+    
+    ${statsHtml}
+    
+    <div class="content">
+      ${html}
+    </div>
+    
     <div class="footer">
-      由 g2log 自动生成 | Git工作总结工具
+      Generated by g2log | Intelligent Git Summary Tool
     </div>
   </div>
 </body>
@@ -226,7 +508,7 @@ function textToHtml(text, title = 'Git工作总结') {
 }
 
 // 生成HTML文件并保存
-function generateHtmlAndSave(content, title = 'Git工作总结', author = '', since = '', until = '') {
+function generateHtmlAndSave(content, title = 'Git工作总结', author = '', since = '', until = '', stats = null) {
   const path = require('path');
   const fs = require('fs');
 
@@ -251,7 +533,7 @@ function generateHtmlAndSave(content, title = 'Git工作总结', author = '', si
   const filepath = path.join(CONFIG_DIR, filename);
 
   // 写入HTML文件
-  const html = textToHtml(content, title);
+  const html = textToHtml(content, title, stats);
   fs.writeFileSync(filepath, html, 'utf-8');
 
   console.log(colorize(`\n✅ HTML文件已保存: ${filepath}`, 'green'));
@@ -1314,6 +1596,55 @@ function getCommitStats(repoPath, commitHash) {
   }
 }
 
+function parseNumstatStats(output) {
+  const stats = { added: 0, deleted: 0 };
+  if (!output || !output.trim()) {
+    return stats;
+  }
+
+  for (const line of output.trim().split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const parts = trimmed.split('\t');
+    if (parts.length < 3) continue;
+
+    const added = parseInt(parts[0], 10);
+    const deleted = parseInt(parts[1], 10);
+
+    if (!Number.isNaN(added)) stats.added += added;
+    if (!Number.isNaN(deleted)) stats.deleted += deleted;
+  }
+
+  return stats;
+}
+
+function getChangeStatsForRepo(repoPath, author, since, until, options = {}) {
+  try {
+    let command = `git -C "${repoPath}" log --since="${since}" --until="${until}" --pretty=tformat: --numstat`;
+    if (author && author.trim()) {
+      command = `git -C "${repoPath}" log --author="${author}" --since="${since}" --until="${until}" --pretty=tformat: --numstat`;
+    }
+    if (options.noMerges) {
+      command += ' --no-merges';
+    }
+
+    const output = execSync(command, { encoding: 'utf-8' });
+    return parseNumstatStats(output);
+  } catch (error) {
+    return { added: 0, deleted: 0, failed: true };
+  }
+}
+
+function mergeChangeStats(totalStats, repoStats) {
+  if (!repoStats) return totalStats;
+  totalStats.added += repoStats.added || 0;
+  totalStats.deleted += repoStats.deleted || 0;
+  if (repoStats.failed) {
+    totalStats.failed = true;
+  }
+  return totalStats;
+}
+
 // 获取提交补丁信息
 function getCommitPatch(repoPath, commitHash) {
   try {
@@ -2064,6 +2395,7 @@ async function getDeepSeekResponse(apiKey, prompt, modelName, apiBaseURL, spinne
 // 从多个仓库获取日志
 async function getLogsFromMultipleRepos(author, since, until, options) {
   const config = loadConfig();
+  const effectiveOptions = options || {};
   
   // 检查是否有配置的仓库
   if (!config.repositories || Object.keys(config.repositories).length === 0) {
@@ -2078,6 +2410,7 @@ async function getLogsFromMultipleRepos(author, since, until, options) {
   let allLogs = '';
   let logCount = 0;
   let repos = 0;
+  const totalStats = { added: 0, deleted: 0, failed: false };
   
   // 遍历所有仓库
   for (const [alias, repoPath] of Object.entries(config.repositories)) {
@@ -2095,12 +2428,12 @@ async function getLogsFromMultipleRepos(author, since, until, options) {
       }
       
       // 添加选项
-      if (options.noMerges) {
+      if (effectiveOptions.noMerges) {
         command += ' --no-merges';
       }
       
       // 添加格式选项
-      if (options.simpleMode) {
+      if (effectiveOptions.simpleMode) {
         command += ` --pretty=format:"${alias} | %ad | %s%n%b%n"`;
       } else {
         command += ` --pretty=format:"${alias} | %ad | %h | %s%n%b%n"`;
@@ -2112,6 +2445,8 @@ async function getLogsFromMultipleRepos(author, since, until, options) {
       
       // 检查是否有日志，如果有则添加到结果
       if (repoLogs.trim()) {
+        const repoStats = getChangeStatsForRepo(repoPath, author, since, until, effectiveOptions);
+        mergeChangeStats(totalStats, repoStats);
         const repoCommitCount = (repoLogs.match(/\n\n/g) || []).length + 1;
         logCount += repoCommitCount;
         repos++;
@@ -2132,7 +2467,7 @@ async function getLogsFromMultipleRepos(author, since, until, options) {
     spinner.stop(`📭 未找到 ${authorText} 在 ${since} 至 ${until} 期间的提交记录`);
   }
   
-  return allLogs;
+  return { logs: allLogs, stats: totalStats };
 }
 
 // 设置prompt模板
@@ -2763,10 +3098,12 @@ async function getGitLogs() {
         noMerges: true,
         simpleMode: true 
       };
-      const multiRepoLogs = await getLogsFromMultipleRepos(author, since, until, multiRepoOptions);
+      const multiRepoResult = await getLogsFromMultipleRepos(author, since, until, multiRepoOptions);
       
       // 如果有多仓库日志结果
-      if (multiRepoLogs) {
+      if (multiRepoResult) {
+        const multiRepoLogs = multiRepoResult.logs || '';
+        const changeStats = multiRepoResult.stats;
         if (multiRepoLogs.trim() === '') {
           console.log(colorize(`📭 在所有配置的仓库中未找到 ${author} 在 ${since} 至 ${until} 期间的提交记录。`, 'yellow'));
           return;
@@ -2778,11 +3115,13 @@ async function getGitLogs() {
 
           // 直接调用带spinner参数的summarizeWithAI函数
           const aiResult = await summarizeWithAI(multiRepoLogs, author, since, until, summarySpinner);
+          const statsText = formatChangeStatsText(changeStats);
+          const summaryWithStats = statsText ? `${statsText}\n\n${aiResult}` : aiResult;
 
           // 如果指定了 --html 或 --open，生成HTML并保存
           if (args['html'] || args['open']) {
             const summaryTitle = author ? `${author} 的工作总结` : '团队工作总结';
-            const filepath = generateHtmlAndSave(aiResult, summaryTitle, author, since, until);
+            const filepath = generateHtmlAndSave(aiResult, summaryTitle, author, since, until, changeStats);
 
             // 在浏览器中打开HTML文件
             const { execSync } = require('child_process');
@@ -2808,7 +3147,7 @@ async function getGitLogs() {
 
             // 在终端显示格式化的输出（带颜色）
             console.log('\n');
-            console.log(formatMarkdown(aiResult));
+            console.log(formatMarkdown(summaryWithStats));
             return;
           }
 
@@ -2843,12 +3182,12 @@ async function getGitLogs() {
           }
 
           const fileSpinner = spinner.start(`💾 正在保存AI总结到文件: ${defaultFileName}`);
-          fs.writeFileSync(defaultFileName, `# ${summaryTitle} (${since} 至 ${until})\n\n${aiResult}`, 'utf-8');
+          fs.writeFileSync(defaultFileName, `# ${summaryTitle} (${since} 至 ${until})\n\n${summaryWithStats}`, 'utf-8');
           fileSpinner.stop(`✅ AI总结已保存到: ${defaultFileName}`);
 
           // 在终端显示格式化的输出（带颜色）
           console.log('\n');
-          console.log(formatMarkdown(aiResult));
+          console.log(formatMarkdown(summaryWithStats));
           return;
         } catch (error) {
           console.error(colorize(`❌ AI总结失败: ${error.message}`, 'red'));
@@ -2907,6 +3246,9 @@ async function getGitLogs() {
         
         return;
       }
+
+      const changeStats = getChangeStatsForRepo(repoPath, author, since, until, { noMerges: true });
+      const statsText = formatChangeStatsText(changeStats);
       
       // 生成AI总结
       try {
@@ -2914,6 +3256,7 @@ async function getGitLogs() {
 
         // 直接调用带spinner参数的summarizeWithAI函数
         const aiSummaryResult = await summarizeWithAI(result, author, since, until, summarySpinner);
+        const summaryWithStats = statsText ? `${statsText}\n\n${aiSummaryResult}` : aiSummaryResult;
 
         if (process.argv.includes('--debug')) {
           console.log(colorize(`📝 AI响应长度: ${aiSummaryResult.length} 字符`, 'cyan'));
@@ -2925,11 +3268,11 @@ async function getGitLogs() {
         // 如果指定了 --html 或 --open，生成HTML并保存
         if (args['html'] || args['open']) {
           const summaryTitle = author ? `${author} 的工作总结` : '团队工作总结';
-          generateHtmlAndSave(aiSummaryResult, summaryTitle, author, since, until);
+          generateHtmlAndSave(aiSummaryResult, summaryTitle, author, since, until, changeStats);
 
           // 在终端显示格式化的输出（带颜色）
           console.log('\n');
-          console.log(formatMarkdown(aiSummaryResult));
+          console.log(formatMarkdown(summaryWithStats));
           return;
         }
 
@@ -2992,7 +3335,7 @@ async function getGitLogs() {
         }
 
         const fileSpinner = spinner.start(`💾 正在保存AI总结到文件: ${defaultFileName}`);
-        fs.writeFileSync(defaultFileName, `# ${summaryTitle} (${since} 至 ${until})\n\n${aiSummaryResult}`, 'utf-8');
+        fs.writeFileSync(defaultFileName, `# ${summaryTitle} (${since} 至 ${until})\n\n${summaryWithStats}`, 'utf-8');
 
         if (saveToConfigDir) {
           fileSpinner.stop(`✅ AI总结已保存到: ${defaultFileName}`);
@@ -3002,19 +3345,20 @@ async function getGitLogs() {
 
         // 在终端显示格式化的输出（带颜色）
         console.log('\n');
-        console.log(formatMarkdown(aiSummaryResult));
+        console.log(formatMarkdown(summaryWithStats));
         return;
       } catch (error) {
         console.error(colorize(`❌ AI总结失败: ${error.message}`, 'red'));
         // 如果AI总结失败，输出原始日志
         console.log(`\n📋 ${authorText} 的Git提交日志 (${since} 至 ${until})\n`);
-        console.log(result);
+        const logsWithStats = statsText ? `${statsText}\n\n${result}` : result;
+        console.log(logsWithStats);
 
         // 如果指定了输出文件，保存结果
         if (outputFile) {
           const fileSpinner = spinner.start(`💾 正在保存结果到文件: ${outputFile}`);
           const summaryTitle = author ? `${author} 的Git提交日志` : 'Git提交日志';
-          const outputContent = `# ${summaryTitle} (${since} 至 ${until})\n\n${result}`;
+          const outputContent = `# ${summaryTitle} (${since} 至 ${until})\n\n${logsWithStats}`;
           fs.writeFileSync(outputFile, outputContent, 'utf-8');
           fileSpinner.stop(`✅ 结果已保存到文件: ${outputFile}`);
         }
